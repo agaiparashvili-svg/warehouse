@@ -174,6 +174,13 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
       <div class="form-group"><label>სახელი და გვარი</label><input type="text" id="rg-name" placeholder="გიორგი მაისურაძე"></div>
       <div class="form-group"><label>ელ-ფოსტა</label><input type="email" id="rg-email" placeholder="mail@example.com"></div>
       <div class="form-group"><label>პაროლი</label><input type="password" id="rg-pass" placeholder="••••••••"></div>
+      <div class="form-group"><label>როლი (რას აკეთებ საწყობში)</label>
+        <select id="rg-role">
+          <option value="orderer">🛒 შემკვეთი — წერს/ტვირთავს შეკვეთებს</option>
+          <option value="receiver">📥 საწყობის მიმღები — ადასტურებს ჩამოსვლას</option>
+          <option value="techreceiver">🔧 ტექნიკური მიმღები — ადასტურებს ტექნიკურ საწყობში</option>
+        </select>
+      </div>
       <div id="rg-err" class="error-msg"></div><div id="rg-ok" class="success-msg"></div>
       <button class="btn btn-primary btn-full" onclick="doRegister()">რეგისტრაცია</button>
     </div>
@@ -288,6 +295,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
         <input type="date" id="rep-from" onchange="renderReport()">
         <input type="date" id="rep-to" onchange="renderReport()">
         <button class="btn btn-light btn-sm" onclick="exportReport()">📥 ექსპორტი</button>
+        <button class="btn btn-danger btn-sm" id="btn-reset" onclick="archiveAndReset()" style="display:none">🗄️ ნულიდან დაწყება</button>
       </div>
       <div class="stats-grid" id="rep-stats"></div>
       <div id="report-list"></div>
@@ -396,16 +404,16 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 <script type="module">
 import{initializeApp}from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import{getAuth,createUserWithEmailAndPassword,signInWithEmailAndPassword,signOut,onAuthStateChanged,sendEmailVerification,sendPasswordResetEmail}from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import{getFirestore,collection,doc,setDoc,getDoc,addDoc,updateDoc,deleteDoc,onSnapshot,query,orderBy,serverTimestamp,increment}from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import{getFirestore,collection,doc,setDoc,getDoc,addDoc,updateDoc,deleteDoc,onSnapshot,query,orderBy,serverTimestamp,increment,writeBatch}from"https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-// Same Firebase project, but the warehouse has its own collections (wh_users, wh_*) — no link to the pool app.
+// Dedicated SAWYOBI Firebase project — fully independent, no link to the pool-tracker app.
 const firebaseConfig={
-  apiKey:"AIzaSyCbN82LelJ26PtYAe2jDUKRElaHL8m83us",
-  authDomain:"pool-tracker-82049.firebaseapp.com",
-  projectId:"pool-tracker-82049",
-  storageBucket:"pool-tracker-82049.firebasestorage.app",
-  messagingSenderId:"47823218482",
-  appId:"1:47823218482:web:4bb87a006a3965a50bd92b"
+  apiKey:"AIzaSyAZyNXQwhcEJgNBJCuHr621L3tZihRnUdI",
+  authDomain:"sawyobi-f7228.firebaseapp.com",
+  projectId:"sawyobi-f7228",
+  storageBucket:"sawyobi-f7228.firebasestorage.app",
+  messagingSenderId:"537614421805",
+  appId:"1:537614421805:web:f0e4df0f275dcd58424da4"
 };
 const fireApp=initializeApp(firebaseConfig);
 const auth=getAuth(fireApp);
@@ -485,13 +493,15 @@ window.doLogin=async function(){
 window.doRegister=async function(){
   const name=$('rg-name').value.trim(),email=$('rg-email').value.trim().toLowerCase(),pass=$('rg-pass').value;
   const err=$('rg-err'),ok=$('rg-ok');err.textContent='';ok.textContent='';
+  const reqRole=$('rg-role')?$('rg-role').value:'orderer';
   if(!name||!email||!pass){err.textContent='ყველა ველი სავალდებულოა';return;}
   if(pass.length<6){err.textContent='პაროლი მინიმუმ 6 სიმბოლო';return;}
   try{
     const cred=await createUserWithEmailAndPassword(auth,email,pass);
-    await setDoc(doc(db,'wh_users',cred.user.uid),{uid:cred.user.uid,name,email,role:'pending',createdAt:serverTimestamp()});
+    // requested role saved; stays 'pending' until an admin approves
+    await setDoc(doc(db,'wh_users',cred.user.uid),{uid:cred.user.uid,name,email,role:'pending',requestedRole:reqRole,createdAt:serverTimestamp()});
     await sendEmailVerification(cred.user);await signOut(auth);
-    ok.textContent='✓ დარეგისტრირდით! დაელოდეთ დადასტურებას.';
+    ok.textContent='✓ დარეგისტრირდით! დაელოდეთ ადმინის დადასტურებას.';
     ['rg-name','rg-email','rg-pass'].forEach(id=>$(id).value='');
   }catch(e){err.textContent=e.code==='auth/email-already-in-use'?'ელ-ფოსტა უკვე გამოყენებულია':e.message;}
 };
@@ -525,6 +535,7 @@ function buildNav(role){
   const ib=$('btn-import');if(ib)ib.style.display=canEditOrders()?'':'none';
   const sb=$('btn-sync');if(sb)sb.style.display=canEditOrders()?'':'none';
   const npb=$('btn-newprod');if(npb)npb.style.display=canEditOrders()?'':'none';
+  const rb=$('btn-reset');if(rb)rb.style.display=isAdmin()?'':'none';
   showSection('sec-dash');updateFab('sec-dash');
   startListeners();
 }
@@ -543,15 +554,15 @@ window.onFab=function(){const ctx=$('fab').dataset.ctx;if(ctx==='sec-stock')open
 // ---------- DATA LISTENERS ----------
 function startListeners(){
   unsub.push(onSnapshot(query(collection(db,'wh_products'),orderBy('name')),snap=>{
-    products=snap.docs.map(d=>({id:d.id,...d.data()}));
+    products=snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.archived);
     renderStock();renderDash();fillProductSelect();renderReport();
   },e=>toast('მარაგის ჩატვირთვა ვერ მოხერხდა','bad')));
   unsub.push(onSnapshot(query(collection(db,'wh_orders'),orderBy('createdAt','desc')),snap=>{
-    orders=snap.docs.map(d=>({id:d.id,...d.data()}));
+    orders=snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.archived);
     renderOrders();renderDash();renderArrivals();renderReport();
   },e=>{}));
   unsub.push(onSnapshot(query(collection(db,'wh_moves'),orderBy('createdAt','desc')),snap=>{
-    moves=snap.docs.map(d=>({id:d.id,...d.data()}));
+    moves=snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.archived);
     renderIssues();renderDash();renderReport();
   },e=>{}));
   if(currentRole==='admin'){
@@ -732,9 +743,10 @@ window.confirmReceipt=async function(id,stage,accept){
   const o=orders.find(x=>x.id===id);if(!o)return;
   try{
     let receipt,extra;
-    if(!accept){receipt='rejected';extra={rejectedBy:currentName,rejectedAt:serverTimestamp(),rejectedStage:stage};}
+    const tcEl=$('tcmt_'+id);const techComment=(stage==='tech'&&tcEl)?tcEl.value.trim():undefined;
+    if(!accept){receipt='rejected';extra={rejectedBy:currentName,rejectedAt:serverTimestamp(),rejectedStage:stage};if(techComment!==undefined)extra.techComment=techComment;}
     else if(stage==='wh'){receipt='wh';extra={whReceivedBy:currentName,whReceivedAt:serverTimestamp()};}
-    else{receipt='confirmed';extra={receivedBy:currentName,receivedAt:serverTimestamp()};}
+    else{receipt='confirmed';extra={receivedBy:currentName,receivedAt:serverTimestamp()};if(techComment!==undefined)extra.techComment=techComment;}
     const merged={...o,receipt};
     const r=await reconcileStockTo(merged,stockTarget(merged),'მიღება დადასტურდა (ტექნიკური)','მიღება გაუქმდა');
     const data={receipt,appliedQty:r.appliedQty,...extra};
@@ -776,6 +788,7 @@ function arrCard(o,extra){
     <div class="row-top">
       <div><div class="row-name">${esc(orderName(o))}</div>
       ${o.purpose?'<div class="row-sub">🎯 '+esc(o.purpose)+'</div>':''}
+      ${o.techComment?'<div class="row-sub" style="color:#b45309;font-weight:700">🔧 '+esc(o.techComment)+'</div>':''}
       <div class="row-sub">${o.department?'🏢 '+esc(o.department)+' · ':''}${o.statusBy?'მონიშნა: '+esc(o.statusBy):''}</div>
       ${o.sourceFile?'<div class="row-sub">📄 '+esc(o.sourceFile)+'</div>':''}
       <div class="row-sub">📅 ${d&&!isNaN(d)?fmtDate(d):'—'}${o.receivedBy?' · მიიღო: '+esc(o.receivedBy):''}</div></div>
@@ -794,13 +807,16 @@ window.renderArrivals=function(){
   const stage2=arrived.filter(o=>receiptOf(o)==='wh').sort((a,b)=>dnum(a.whReceivedAt||a.arrivedAt)-dnum(b.whReceivedAt||b.arrivedAt));
   const confirmed=arrived.filter(o=>receiptOf(o)==='confirmed').sort((a,b)=>dnum(b.receivedAt||b.arrivedAt)-dnum(a.receivedAt||a.arrivedAt));
   const cf=canConfirm(),cft=canConfirmTech();
+  const isTech=currentRole==='techreceiver'; // technical receiver: sees ONLY their queue, not stage 1
   let html='';
-  // stage 1 — warehouse receiver
-  html+=`<h3 style="font-size:14px;font-weight:800;color:var(--warn);margin:4px 0 10px">⏳ საწყობის მიმღების დასადასტურებელი (${stage1.length})</h3>`;
-  html+=stage1.length?stage1.map(o=>arrCard(o,cf?`<div class="row-actions"><button class="btn btn-good btn-sm" onclick="confirmReceipt('${o.id}','wh',true)">✅ მივიღე</button><button class="btn btn-danger btn-sm" onclick="confirmReceipt('${o.id}','wh',false)">❌ არ მივიღე</button></div>`:'<div class="row-sub muted">ელოდება საწყობის მიმღების დადასტურებას</div>')).join(''):'<p class="muted" style="margin-bottom:14px">ცარიელია ✓</p>';
-  // stage 2 — technical receiver (this confirmation adds to stock)
+  // stage 1 — warehouse receiver (hidden from the technical receiver until warehouse confirms)
+  if(!isTech){
+    html+=`<h3 style="font-size:14px;font-weight:800;color:var(--warn);margin:4px 0 10px">⏳ საწყობის მიმღების დასადასტურებელი (${stage1.length})</h3>`;
+    html+=stage1.length?stage1.map(o=>arrCard(o,cf?`<div class="row-actions"><button class="btn btn-good btn-sm" onclick="confirmReceipt('${o.id}','wh',true)">✅ მივიღე</button><button class="btn btn-danger btn-sm" onclick="confirmReceipt('${o.id}','wh',false)">❌ არ მივიღე</button></div>`:'<div class="row-sub muted">ელოდება საწყობის მიმღების დადასტურებას</div>')).join(''):'<p class="muted" style="margin-bottom:14px">ცარიელია ✓</p>';
+  }
+  // stage 2 — technical receiver (this confirmation adds to stock). tech can add a comment (e.g. "სხვა ჩამოვიდა").
   html+=`<h3 style="font-size:14px;font-weight:800;color:#b45309;margin:18px 0 10px">🔧 ტექნიკური მიმღების დასადასტურებელი (${stage2.length})</h3>`;
-  html+=stage2.length?stage2.map(o=>arrCard(o,cft?`<div class="row-actions"><button class="btn btn-good btn-sm" onclick="confirmReceipt('${o.id}','tech',true)">✅ მივიღე ტექნიკურ საწყობში</button><button class="btn btn-danger btn-sm" onclick="confirmReceipt('${o.id}','tech',false)">❌ არ მივიღე</button></div>`:'<div class="row-sub muted">ელოდება ტექნიკური მიმღების დადასტურებას</div>')).join(''):'<p class="muted" style="margin-bottom:14px">ცარიელია ✓</p>';
+  html+=stage2.length?stage2.map(o=>arrCard(o,cft?`<div style="margin-top:8px"><input id="tcmt_${o.id}" type="text" placeholder="🎯 კომენტარი (მაგ. სხვა ჩამოვიდა)" value="${esc(o.techComment||'')}" style="width:100%;margin-bottom:8px"><div class="row-actions"><button class="btn btn-good btn-sm" onclick="confirmReceipt('${o.id}','tech',true)">✅ მივიღე ტექნიკურ საწყობში</button><button class="btn btn-danger btn-sm" onclick="confirmReceipt('${o.id}','tech',false)">❌ არ მივიღე</button></div></div>`:'<div class="row-sub muted">ელოდება ტექნიკური მიმღების დადასტურებას</div>')).join(''):'<p class="muted" style="margin-bottom:14px">ცარიელია ✓</p>';
   // confirmed (in stock)
   html+=`<h3 style="font-size:14px;font-weight:800;color:var(--good);margin:18px 0 10px">✅ მიღებული — მარაგში (${confirmed.length})</h3>`;
   html+=confirmed.length?confirmed.map(o=>ag(o)).join(''):'<p class="muted">ჯერ არაფერი მიღებულა</p>';
@@ -902,6 +918,57 @@ window.exportReport=function(){
   toast('ფაილი ჩამოიტვირთა ✓','good');
 };
 
+// ---------- ARCHIVE & RESET (admin) — save a full backup, then start from zero ----------
+function backupWorkbook(){
+  const wb=XLSX.utils.book_new();
+  // orders
+  const oh=['№','თარიღი','ფაილი','განყოფილება','დასახელება','კომენტარი','ერთეული','რაოდენობა','ფასი','სტატუსი','ჩამოსულია?','მიღების ეტაპი','ჩამოსული','შენიშვნა'];
+  const rcTxt={pending:'საწყობის მიმღები',wh:'ტექნიკური მიმღები',confirmed:'მიღებული',rejected:'უარყოფილი'};
+  const oa=[oh];orders.slice().sort((a,b)=>dnum(a.orderDate)-dnum(b.orderDate)).forEach((o,i)=>oa.push([i+1,o.orderDate?fmtDate(o.orderDate):'',o.sourceFile||'',o.department||'',orderName(o),o.purpose||'',o.unit||'',num(o.qty),o.price!=null&&o.price!==''?num(o.price):'',ST[ostat(o)].l,arrivedYesNo(o),rcTxt[receiptOf(o)]||'—',arrivedTarget(o),[o.note,o.techComment?('🔧 '+o.techComment):''].filter(Boolean).join(' | ')]));
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(oa),'შეკვეთები');
+  // issues (out moves)
+  const ih=['№','ნივთი','რაოდენობა','ერთეული','რაში დაეხარჯა','ვინ','თარიღი'];
+  const ia=[ih];moves.filter(m=>m.type==='out').forEach((m,i)=>ia.push([i+1,m.productName||'',num(m.qty),m.unit||'',m.note||'',m.byName||'',fmtDateTime(m.createdAt)]));
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(ia),'გაცემები');
+  // stock
+  const sh=['№','პროდუქტი','ერთეული','კატეგორია','ნაშთი','მინ. მარაგი'];
+  const sa=[sh];products.forEach((p,i)=>sa.push([i+1,p.name||'',p.unit||'',p.category||'',num(p.stock),num(p.minStock)]));
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(sa),'მარაგი');
+  // product report
+  const rows=buildReport();
+  const rh=['№','პროდუქტი','ერთეული','შეკვეთილი','ჩამოსული','გაცემული','ნაშთი'];
+  const ra=[rh];rows.forEach((e,i)=>ra.push([i+1,e.name,e.unit,e.ordered,e.arrived,e.issued,e.stock]));
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(ra),'რეპორტი');
+  return wb;
+}
+async function archiveDocs(coll,arr,batchId){
+  for(let i=0;i<arr.length;i+=400){
+    const chunk=arr.slice(i,i+400);const b=writeBatch(db);
+    chunk.forEach(x=>b.update(doc(db,coll,x.id),{archived:true,archiveId:batchId}));
+    await b.commit();
+  }
+}
+window.archiveAndReset=async function(){
+  if(!isAdmin()){toast('მხოლოდ ადმინისთვის','bad');return;}
+  if(!window.XLSX){toast('Excel-ის ბიბლიოთეკა იტვირთება, სცადეთ ისევ','warn');return;}
+  const total=orders.length+moves.length+products.length;
+  if(!total){toast('უკვე ცარიელია','warn');return;}
+  if(!confirm(`ყველა მონაცემი დაარქივდება და გასუფთავდება:\n• ${orders.length} შეკვეთა\n• ${moves.length} მოძრაობა\n• ${products.length} პროდუქტი\n\nჯერ ჩამოიტვირთება Excel-ბექაფი. გავაგრძელო?`))return;
+  if(!confirm('დარწმუნებული ხართ? ეს ქმედება საწყობს ნულიდან იწყებს.'))return;
+  try{
+    // 1) download full backup
+    const stamp=new Date().toISOString().slice(0,16).replace('T','_').replace(':','-');
+    XLSX.writeFile(backupWorkbook(),'საწყობი_არქივი_'+stamp+'.xlsx');
+    // 2) archive (flag) then views clear automatically
+    toast('არქივირდება…','info');
+    const batchId=stamp;
+    await archiveDocs('wh_orders',orders,batchId);
+    await archiveDocs('wh_moves',moves,batchId);
+    await archiveDocs('wh_products',products,batchId);
+    toast('✓ დაარქივდა და გასუფთავდა — ნულიდან დაიწყო','good');
+  }catch(e){toast('შეცდომა: '+e.message,'bad');}
+};
+
 function emptyBox(ico,txt){return `<div class="empty"><span class="ico">${ico}</span><p>${txt}</p></div>`;}
 
 // ---------- USERS (admin) — warehouse-only accounts (wh_users) ----------
@@ -914,18 +981,22 @@ window.renderUsers=function(){
   list.sort((a,b)=>{const rank={pending:0,receiver:1,techreceiver:1,orderer:1,admin:2};return (rank[a.role]??9)-(rank[b.role]??9)||(a.name||'').localeCompare(b.name||'');});
   if(term)list=list.filter(u=>(u.name||'').toLowerCase().includes(term)||(u.email||'').toLowerCase().includes(term));
   if(!list.length){$('users-list').innerHTML=emptyBox('👥','მომხმარებელი არ მოიძებნა.');return;}
+  const rlLbl={admin:'👑 ადმინი',orderer:'🛒 შემკვეთი',receiver:'📥 საწყობის მიმღები',techreceiver:'🔧 ტექნიკური მიმღები',pending:'⏳ მოლოდინში'};
   const rlBadge={admin:'<span class="badge received">👑 ადმინი</span>',orderer:'<span class="badge ordered">🛒 შემკვეთი</span>',receiver:'<span class="badge arrived">📥 საწყობის მიმღები</span>',techreceiver:'<span class="badge transit">🔧 ტექნიკური მიმღები</span>',pending:'<span class="badge low">⏳ მოლოდინში</span>'};
   const me=currentUser?currentUser.uid:'';
   $('users-list').innerHTML=list.map(u=>{
     const isMe=u.id===me;const wr=u.role||'pending';
+    const req=u.requestedRole&&rlLbl[u.requestedRole]?u.requestedRole:'';
     return `<div class="list-row ${wr==='pending'?'low':''}">
       <div class="row-top">
         <div><div class="row-name">${esc(u.name||'(უსახელო)')}${isMe?' <span class="muted">(თქვენ)</span>':''}</div>
         <div class="row-sub">${esc(u.email||'')}</div>
+        ${wr==='pending'&&req?'<div class="row-sub" style="color:var(--accent);font-weight:700">ითხოვს: '+rlLbl[req]+'</div>':''}
         <div class="row-sub">დარეგისტრ.: ${u.createdAt?fmtDate(u.createdAt):'—'}</div></div>
         <div>${rlBadge[wr]||esc(wr)}</div>
       </div>
       ${isMe?'':`<div class="row-actions">
+        ${wr==='pending'&&req?`<button class="btn btn-good btn-sm" onclick="setRole('${u.id}','${req}')">✅ დაადასტურე (${rlLbl[req]})</button>`:''}
         <select onchange="setRole('${u.id}',this.value)" style="width:auto;flex:0 1 auto;font-size:13px;padding:8px 10px">
           <option value="pending" ${wr==='pending'?'selected':''}>⏳ მოლოდინში</option>
           <option value="orderer" ${wr==='orderer'?'selected':''}>🛒 შემკვეთი</option>
@@ -1116,7 +1187,7 @@ window.exportOrders=function(){
   const list=orders.slice().sort((a,b)=>dnum(a.orderDate)-dnum(b.orderDate));
   const rcTxt={pending:'საწყობის მიმღების მოლოდინში',wh:'ტექნიკური მიმღების მოლოდინში',confirmed:'მიღებული (მარაგში)',rejected:'უარყოფილი'};
   const aoa=[head];
-  list.forEach((o,i)=>aoa.push([i+1,o.orderDate?fmtDate(o.orderDate):'',o.sourceFile||'',o.department||'',orderName(o),o.purpose||'',o.unit||'',num(o.qty),o.price!=null&&o.price!==''?num(o.price):'',ST[ostat(o)].l,arrivedYesNo(o),rcTxt[receiptOf(o)]||'—',arrivedTarget(o),o.note||'']));
+  list.forEach((o,i)=>aoa.push([i+1,o.orderDate?fmtDate(o.orderDate):'',o.sourceFile||'',o.department||'',orderName(o),o.purpose||'',o.unit||'',num(o.qty),o.price!=null&&o.price!==''?num(o.price):'',ST[ostat(o)].l,arrivedYesNo(o),rcTxt[receiptOf(o)]||'—',arrivedTarget(o),[o.note,o.techComment?('🔧 '+o.techComment):''].filter(Boolean).join(' | ')]));
   const ws=XLSX.utils.aoa_to_sheet(aoa);
   ws['!cols']=[{wch:5},{wch:12},{wch:24},{wch:13},{wch:32},{wch:22},{wch:8},{wch:10},{wch:9},{wch:16},{wch:12},{wch:26},{wch:11},{wch:20}];
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'შეკვეთები');
