@@ -344,6 +344,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
       <div class="form-group"><label>საწყისი მარაგი</label><input type="number" step="0.01" min="0" id="mp-stock" placeholder="0"></div>
       <div class="form-group"><label>მინ. მარაგი (გაფრთხ.)</label><input type="number" step="0.01" min="0" id="mp-min" placeholder="0"></div>
     </div>
+    <div class="form-group"><label>💰 ფასი (ერთეულზე ₾)</label><input type="number" step="0.01" min="0" id="mp-price" placeholder="არასავალდ."></div>
     <div class="form-group"><label>📝 აღწერა / შენიშვნა</label><input type="text" id="mp-note" placeholder="არასავალდ."></div>
     <div id="mp-err" class="error-msg"></div>
     <button class="btn btn-primary btn-full" onclick="saveProduct()">შენახვა</button>
@@ -355,11 +356,15 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
   <div class="modal">
     <div class="modal-head"><h3 id="mo-title">ახალი შეკვეთა</h3><button class="modal-close" onclick="closeModal('m-order')">✕</button></div>
     <input type="hidden" id="mo-id">
-    <div class="form-group"><label>პროდუქტი</label><select id="mo-product"></select></div>
+    <div class="form-group"><label>საქონლის დასახელება</label><input type="text" id="mo-name" list="prodnames" placeholder="ჩაწერე ან აირჩიე"><datalist id="prodnames"></datalist></div>
     <div class="form-group"><label>🎯 კომენტარი / მიზნობრიობა</label><input type="text" id="mo-purpose" placeholder="არასავალდ."></div>
     <div class="modal-row">
       <div class="form-group"><label>რაოდენობა</label><input type="number" step="0.01" min="0" id="mo-qty" placeholder="0"></div>
+      <div class="form-group"><label>ერთეული</label><input type="text" id="mo-unit" list="units" placeholder="ცალი / კგ / ლ"></div>
+    </div>
+    <div class="modal-row">
       <div class="form-group"><label>💰 ფასი</label><input type="number" step="0.01" min="0" id="mo-price" placeholder="არასავალდ."></div>
+      <div class="form-group"><label>🏢 განყოფილება</label><input type="text" id="mo-dept" placeholder="არასავალდ."></div>
     </div>
     <div class="modal-row">
       <div class="form-group"><label>🏭 მომწოდებელი</label><input type="text" id="mo-supplier" placeholder="არასავალდ."></div>
@@ -627,6 +632,7 @@ window.renderStock=function(){
       <div class="row-top">
         <div><div class="row-name">${esc(p.name)}</div>
         <div class="row-sub">${p.category?esc(p.category)+' · ':''}მინ: ${fmtN(num(p.minStock))} ${esc(p.unit||'')}${st!=='ok'?' · <span class="badge '+st+'">'+(st==='out'?'ამოწურული':'დაბალი')+'</span>':''}</div>
+        ${p.price!=null&&p.price!==''?'<div class="row-sub">💰 '+fmtN(num(p.price))+' ₾</div>':''}
         ${p.purpose?'<div class="row-sub">🎯 '+esc(p.purpose)+'</div>':''}
         ${(p.supplier||p.department)?'<div class="row-sub">'+(p.supplier?'🏭 '+esc(p.supplier):'')+(p.supplier&&p.department?' · ':'')+(p.department?'🏢 '+esc(p.department):'')+'</div>':''}
         ${p.note?'<div class="row-sub">📝 '+esc(p.note)+'</div>':''}</div>
@@ -861,10 +867,11 @@ function repInRange(ts){
 function buildReport(){
   const map=new Map();
   const g=(name,unit)=>{const k=(name||'').trim().toLowerCase()||'—';
-    if(!map.has(k))map.set(k,{name:name||'—',unit:unit||'',ordered:0,arrived:0,issued:0,stock:0,hasStock:false,orders:[],issues:[]});
+    if(!map.has(k))map.set(k,{name:name||'—',unit:unit||'',ordered:0,arrived:0,issued:0,stock:0,price:0,_pd:-1,hasStock:false,orders:[],issues:[]});
     const e=map.get(k);if(!e.unit&&unit)e.unit=unit;return e;};
-  products.forEach(p=>{const e=g(p.name,p.unit);e.stock=num(p.stock);e.hasStock=true;});
-  orders.forEach(o=>{if(!repInRange(o.orderDate))return;const e=g(orderName(o),o.unit);e.ordered+=num(o.qty);e.arrived+=arrivedTarget(o);e.orders.push(o);});
+  products.forEach(p=>{const e=g(p.name,p.unit);e.stock=num(p.stock);e.hasStock=true;if(p.price!=null&&p.price!==''){e.price=num(p.price);}});
+  orders.forEach(o=>{if(!repInRange(o.orderDate))return;const e=g(orderName(o),o.unit);e.ordered+=num(o.qty);e.arrived+=arrivedTarget(o);
+    if(o.price!=null&&o.price!==''){const d=dnum(o.orderDate);if(d>=e._pd){e.price=num(o.price);e._pd=d;}}e.orders.push(o);});
   moves.forEach(m=>{if(m.type!=='out'||!repInRange(m.createdAt))return;const e=g(m.productName,m.unit);e.issued+=num(m.qty);e.issues.push(m);});
   return [...map.values()].sort((a,b)=>a.name.localeCompare(b.name,'ka'));
 }
@@ -874,11 +881,13 @@ window.renderReport=function(){
   const term=($('rep-search')?$('rep-search').value:'').trim().toLowerCase();
   if(term)rows=rows.filter(e=>e.name.toLowerCase().includes(term));
   const tOrdered=rows.reduce((s,e)=>s+e.ordered,0),tArr=rows.reduce((s,e)=>s+e.arrived,0),tIss=rows.reduce((s,e)=>s+e.issued,0);
+  const tValue=rows.reduce((s,e)=>s+e.stock*num(e.price),0);
   $('rep-stats').innerHTML=`
     <div class="stat-card"><div class="num">${rows.length}</div><div class="lbl">პროდუქტი</div></div>
     <div class="stat-card"><div class="num">${fmtN(tOrdered)}</div><div class="lbl">სულ შეკვეთილი</div></div>
     <div class="stat-card"><div class="num" style="color:var(--good)">${fmtN(tArr)}</div><div class="lbl">სულ ჩამოსული</div></div>
-    <div class="stat-card"><div class="num" style="color:var(--bad)">${fmtN(tIss)}</div><div class="lbl">სულ გაცემული</div></div>`;
+    <div class="stat-card"><div class="num" style="color:var(--bad)">${fmtN(tIss)}</div><div class="lbl">სულ გაცემული</div></div>
+    <div class="stat-card"><div class="num" style="color:var(--accent)">${fmtN(tValue)}</div><div class="lbl">ნაშთის ღირებულება ₾</div></div>`;
   if(!rows.length){$('report-list').innerHTML=emptyBox('📈','მონაცემი არ მოიძებნა.');return;}
   $('report-list').innerHTML=rows.map(e=>{
     const ordDet=e.orders.length?e.orders.slice().sort((a,b)=>dnum(b.orderDate)-dnum(a.orderDate)).map(o=>{const s=ostat(o);
@@ -889,7 +898,8 @@ window.renderReport=function(){
       <summary style="cursor:pointer">
         <div class="row-top">
           <div><div class="row-name">${esc(e.name)}</div>
-          <div class="row-sub">📦 ნაშთი: <b>${fmtN(e.stock)}</b> ${esc(e.unit)}</div></div>
+          <div class="row-sub">📦 ნაშთი: <b>${fmtN(e.stock)}</b> ${esc(e.unit)}</div>
+          ${num(e.price)?'<div class="row-sub">💰 ფასი: <b>'+fmtN(num(e.price))+' ₾</b>'+(e.stock?' · ღირებ.: <b>'+fmtN(e.stock*num(e.price))+' ₾</b>':'')+'</div>':''}</div>
           <div style="text-align:right;font-size:12px;line-height:1.7;flex-shrink:0">
             <div>🛒 შეკვ. <b>${fmtN(e.ordered)}</b></div>
             <div style="color:var(--good)">🟢 ჩამ. <b>${fmtN(e.arrived)}</b></div>
@@ -909,12 +919,12 @@ window.exportReport=function(){
   const term=($('rep-search')?$('rep-search').value:'').trim().toLowerCase();
   if(term)rows=rows.filter(e=>e.name.toLowerCase().includes(term));
   if(!rows.length){toast('მონაცემი არ არის','warn');return;}
-  const head=['№','პროდუქტი','ერთეული','შეკვეთილი','ჩამოსული','გაცემული','ნაშთი'];
+  const head=['№','პროდუქტი','ერთეული','ფასი ₾','შეკვეთილი','ჩამოსული','გაცემული','ნაშთი','ღირებულება ₾'];
   const aoa=[head];
-  rows.forEach((e,i)=>aoa.push([i+1,e.name,e.unit,e.ordered,e.arrived,e.issued,e.stock]));
-  aoa.push(['','ჯამი','',rows.reduce((s,e)=>s+e.ordered,0),rows.reduce((s,e)=>s+e.arrived,0),rows.reduce((s,e)=>s+e.issued,0),rows.reduce((s,e)=>s+e.stock,0)]);
+  rows.forEach((e,i)=>aoa.push([i+1,e.name,e.unit,num(e.price)||'',e.ordered,e.arrived,e.issued,e.stock,e.stock*num(e.price)]));
+  aoa.push(['','ჯამი','','',rows.reduce((s,e)=>s+e.ordered,0),rows.reduce((s,e)=>s+e.arrived,0),rows.reduce((s,e)=>s+e.issued,0),rows.reduce((s,e)=>s+e.stock,0),rows.reduce((s,e)=>s+e.stock*num(e.price),0)]);
   const ws=XLSX.utils.aoa_to_sheet(aoa);
-  ws['!cols']=[{wch:5},{wch:34},{wch:9},{wch:12},{wch:12},{wch:12},{wch:10}];
+  ws['!cols']=[{wch:5},{wch:34},{wch:9},{wch:9},{wch:12},{wch:12},{wch:12},{wch:10},{wch:13}];
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'რეპორტი');
   XLSX.writeFile(wb,'პროდუქტების_რეპორტი_'+new Date().toISOString().slice(0,10)+'.xlsx');
   toast('ფაილი ჩამოიტვირთა ✓','good');
@@ -1034,6 +1044,7 @@ window.openProduct=function(id){
   $('mp-name').value=p?p.name:'';$('mp-unit').value=p?(p.unit||''):'';$('mp-cat').value=p?(p.category||''):'';
   $('mp-purpose').value=p?(p.purpose||''):'';$('mp-supplier').value=p?(p.supplier||''):'';$('mp-dept').value=p?(p.department||''):'';
   $('mp-note').value=p?(p.note||''):'';
+  $('mp-price').value=p&&p.price!=null&&p.price!==''?num(p.price):'';
   $('mp-stock').value=p?num(p.stock):'';$('mp-min').value=p?num(p.minStock):'';
   $('mp-stock').disabled=!!p; // existing stock changes via moves only
   $('mp-err').textContent='';
@@ -1042,9 +1053,10 @@ window.openProduct=function(id){
 window.saveProduct=async function(){
   const id=$('mp-id').value,name=$('mp-name').value.trim();
   if(!name){$('mp-err').textContent='დასახელება სავალდებულოა';return;}
+  const priceRaw=$('mp-price').value;
   const data={name,unit:$('mp-unit').value.trim(),category:$('mp-cat').value.trim(),
     purpose:$('mp-purpose').value.trim(),supplier:$('mp-supplier').value.trim(),department:$('mp-dept').value.trim(),
-    note:$('mp-note').value.trim(),minStock:num($('mp-min').value),updatedAt:serverTimestamp()};
+    note:$('mp-note').value.trim(),price:priceRaw===''?null:num(priceRaw),minStock:num($('mp-min').value),updatedAt:serverTimestamp()};
   try{
     if(id){await updateDoc(doc(db,'wh_products',id),data);toast('განახლდა ✓','good');}
     else{data.stock=num($('mp-stock').value);data.createdAt=serverTimestamp();data.createdBy=currentName;await addDoc(collection(db,'wh_products'),data);toast('პროდუქტი დაემატა ✓','good');}
@@ -1059,17 +1071,17 @@ window.delProduct=async function(id){
 
 // order
 function fillProductSelect(){
-  const sel=$('mo-product');if(!sel)return;const cur=sel.value;
-  sel.innerHTML=products.map(p=>`<option value="${p.id}">${esc(p.name)}${p.unit?' ('+esc(p.unit)+')':''}</option>`).join('');
-  if(cur)sel.value=cur;
+  const dl=$('prodnames');if(!dl)return;
+  dl.innerHTML=products.map(p=>`<option value="${esc(p.name)}">`).join('');
 }
 window.openOrder=function(id){
-  if(!products.length){toast('ჯერ დაამატეთ პროდუქტი მარაგში','warn');return;}
   const o=id?orders.find(x=>x.id===id):null;
   $('mo-title').textContent=o?'შეკვეთის რედაქტირება':'ახალი შეკვეთა';
   $('mo-id').value=o?o.id:'';
   fillProductSelect();
-  $('mo-product').value=o?o.productId:products[0].id;
+  $('mo-name').value=o?orderName(o):'';
+  $('mo-unit').value=o?(o.unit||''):'';
+  $('mo-dept').value=o?(o.department||''):'';
   $('mo-purpose').value=o?(o.purpose||''):'';
   $('mo-qty').value=o?num(o.qty):'';
   $('mo-price').value=o&&o.price!=null&&o.price!==''?num(o.price):'';
@@ -1081,12 +1093,14 @@ window.openOrder=function(id){
 };
 function toInput(ts){const d=ts.toDate?ts.toDate():new Date(ts);return isNaN(d)?'':d.toISOString().slice(0,10);}
 window.saveOrder=async function(){
-  const id=$('mo-id').value,pid=$('mo-product').value,p=productById(pid);
+  const id=$('mo-id').value,name=$('mo-name').value.trim();
   const qty=num($('mo-qty').value);
-  if(!p){$('mo-err').textContent='აირჩიეთ პროდუქტი';return;}
+  if(!name){$('mo-err').textContent='ჩაწერეთ დასახელება';return;}
   if(qty<=0){$('mo-err').textContent='რაოდენობა უნდა იყოს > 0';return;}
   const priceRaw=$('mo-price').value;
-  const data={productId:pid,productName:p.name,unit:p.unit||'',qty,
+  const match=products.find(x=>(x.name||'').trim().toLowerCase()===name.toLowerCase());
+  const data={itemName:name,productName:name,productId:match?match.id:null,
+    unit:$('mo-unit').value.trim()||(match?match.unit:'')||'',qty,department:$('mo-dept').value.trim(),
     purpose:$('mo-purpose').value.trim(),price:priceRaw===''?null:num(priceRaw),supplier:$('mo-supplier').value.trim(),
     orderDate:$('mo-date').value?new Date($('mo-date').value):null,
     note:$('mo-note').value.trim(),updatedAt:serverTimestamp()};
