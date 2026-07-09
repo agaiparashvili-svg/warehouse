@@ -663,9 +663,9 @@ window.renderOrders=function(){
   const rcLbl={pending:'⏳ საწყობის მიმღები',wh:'⏳ ტექნიკური მიმღები',confirmed:'✅ მიღებულია (მარაგში)',rejected:'❌ უარყოფილია'};
   const rows=list.map(o=>{
     const st=ostat(o);const arr=arrivedTarget(o);const rc=receiptOf(o);
-    const sub=o.sourceFile?('📄 '+esc(o.sourceFile)+(o.orderDate?' · '+fmtDate(o.orderDate):'')):(o.orderDate?('📅 '+fmtDate(o.orderDate)):'');
+    const meta=[o.orderDate?'📅 '+fmtDate(o.orderDate):'',o.department?'🏢 '+esc(o.department):'',o.supplier?'🏭 '+esc(o.supplier):'',o.sourceFile?'📄 '+esc(o.sourceFile):'',o.note?'📝 '+esc(o.note):''].filter(Boolean).join(' · ');
     return `<tr class="${st}">
-      <td class="c-name">${esc(orderName(o))}${sub?'<div class="row-sub muted" style="font-weight:400">'+sub+'</div>':''}</td>
+      <td class="c-name">${esc(orderName(o))}${meta?'<div class="row-sub muted" style="font-weight:400">'+meta+'</div>':''}</td>
       <td class="c-cmt">${esc(o.purpose||'')}</td>
       <td>${esc(o.unit||'')}</td>
       <td class="c-num">${fmtN(num(o.qty))}</td>
@@ -796,9 +796,10 @@ function arrCard(o,extra){
   return `<div class="list-row ${st}">
     <div class="row-top">
       <div><div class="row-name">${esc(orderName(o))}</div>
+      <div class="row-sub">შეკვეთილი: <b>${fmtN(num(o.qty))} ${esc(o.unit||'')}</b>${o.price!=null&&o.price!==''?' · 💰 '+fmtN(num(o.price))+' ₾':''}</div>
       ${o.purpose?'<div class="row-sub">🎯 '+esc(o.purpose)+'</div>':''}
       ${o.techComment?'<div class="row-sub" style="color:#b45309;font-weight:700">🔧 '+esc(o.techComment)+'</div>':''}
-      <div class="row-sub">${o.department?'🏢 '+esc(o.department)+' · ':''}${o.statusBy?'მონიშნა: '+esc(o.statusBy):''}</div>
+      <div class="row-sub">${o.department?'🏢 '+esc(o.department)+' · ':''}${o.supplier?'🏭 '+esc(o.supplier)+' · ':''}${o.statusBy?'მონიშნა: '+esc(o.statusBy):''}</div>
       ${o.sourceFile?'<div class="row-sub">📄 '+esc(o.sourceFile)+'</div>':''}
       <div class="row-sub">📅 ${d&&!isNaN(d)?fmtDate(d):'—'}${o.receivedBy?' · მიიღო: '+esc(o.receivedBy):''}</div></div>
       <div class="row-stock"><div class="v" style="color:var(--good)">+${fmtN(arrivedTarget(o))}</div><div class="u">${esc(o.unit||'')}</div></div>
