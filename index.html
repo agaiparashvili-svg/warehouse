@@ -1125,18 +1125,13 @@ function parseInvoiceLines(lines){
     if(m){invNo=m[1];const d=m[2].split('.');date=new Date(+d[2],+d[1]-1,+d[0]);}
     m=/შემსრულებელი[:\s]+(.+)/.exec(ln);if(m)supplier=m[1].trim();
   }
-  // collect table region
-  const tl=[];let inTable=false;
-  for(const ln of lines){
-    if(/დასახელება/.test(ln)&&/რაოდენობა/.test(ln)){inTable=true;continue;}
-    if(/^\s*სულ[:\s]/.test(ln)||/მათ\s*შორის/.test(ln)||/საბანკო/.test(ln))inTable=false;
-    if(inTable&&ln.trim())tl.push(ln.trim());
-  }
   // an item starts on a line that is just an index (№ alone) or "№ <description...>"
   const isStart=t=>{t=t.trim();if(/^\d+$/.test(t))return true;const m=/^(\d+)\s+(.+)/.exec(t);return !!(m&&/[A-Za-zა-ჰ]/.test(m[2]));};
-  const recs=[];let cur=null;
-  for(const ln of tl){
-    if(isStart(ln)){if(cur!=null)recs.push(cur);const m=/^(\d+)\s+(.+)/.exec(ln);cur=m?m[2]:'';}
+  const recs=[];let cur=null,stop=false;
+  for(const ln of lines){
+    if(/^\s*სულ[:\s]/.test(ln)||/საბანკო/.test(ln)||/მათ\s*შორის/.test(ln))stop=true;
+    if(stop)continue;
+    if(isStart(ln)){if(cur!=null)recs.push(cur);const m=/^(\d+)\s+(.+)/.exec(ln.trim());cur=m?m[2]:'';}
     else if(cur!=null)cur=(cur+' '+ln).trim();
   }
   if(cur!=null)recs.push(cur);
@@ -1174,7 +1169,11 @@ window.onInvoicePicked=async function(ev){
       });
     }
     const {invNo,date,supplier,items}=parseInvoiceLines(lines);
-    if(!items.length){toast('ინვოისში ნივთები ვერ მოიძებნა — სცადე ხელით ➕','warn');return;}
+    if(!items.length){
+      // diagnostic: show what pdf.js actually extracted, so it can be fixed precisely
+      activateSection('sec-pools',[...document.querySelectorAll('.nav-item')].find(n=>n.textContent.includes('აუზ'))||document.querySelector('.nav-item'));
+      if($('pools-list'))$('pools-list').innerHTML='<div class="card"><b>⚠️ ვერ ამოვიცანი ნივთები ამ ინვოისში.</b><br>გამომიგზავნე ეს სქრინი, ზუსტად გავასწორებ:<div style="font-size:11px;margin-top:10px;white-space:pre-wrap;font-family:monospace;background:var(--surface2);padding:10px;border-radius:8px;max-height:60vh;overflow:auto">'+esc(lines.join('\n'))+'</div></div>';
+      toast('ვერ ამოვიცანი — იხ. ტექსტი ქვემოთ','warn');return;}
     const tot=items.reduce((s,it)=>s+num(it.amount),0);
     if(!confirm(`ინვოისი: ${invNo||'—'}\nთარიღი: ${date?date.toLocaleDateString('ka-GE'):'—'}\nმომწოდებელი: ${supplier||'—'}\nნაპოვნია ${items.length} ნივთი, სულ ${fmtN(tot)} ₾.\n\nავტვირთო აუზების მოდულში?`))return;
     let ok=0;
