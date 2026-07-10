@@ -1118,30 +1118,37 @@ window.exportPools=function(){
 // ---- PDF invoice import ----
 window.pickInvoice=function(){if(!window.pdfjsLib){toast('PDF ბიბლიოთეკა იტვირთება, სცადეთ ისევ','warn');return;}$('invoice-file').click();};
 function parseInvoiceLines(lines){
-  // header: "ინვოისი № XXX, DD.MM.YYYY"
+  // header
   let invNo='',date=null,supplier='';
   for(const ln of lines){
     let m=/ინვოისი\s*№?\s*([A-Za-z0-9\-\/]+)[,\s]+(\d{1,2}\.\d{1,2}\.\d{4})/.exec(ln);
     if(m){invNo=m[1];const d=m[2].split('.');date=new Date(+d[2],+d[1]-1,+d[0]);}
     m=/შემსრულებელი[:\s]+(.+)/.exec(ln);if(m)supplier=m[1].trim();
   }
-  // items: lines that start with an index and end with >=3 trailing numbers (qty price amount [vat])
-  const items=[];let inTable=false;
+  // collect table region
+  const tl=[];let inTable=false;
   for(const ln of lines){
     if(/დასახელება/.test(ln)&&/რაოდენობა/.test(ln)){inTable=true;continue;}
-    if(/^\s*სულ[:\s]/.test(ln)||/მ\.?შ\.?\s*დღგ/.test(ln)||/საბანკო/.test(ln))inTable=false;
-    if(!inTable)continue;
-    const toks=ln.trim().split(/\s+/);
-    if(toks.length<5)continue;
-    if(!/^\d+$/.test(toks[0]))continue; // row index
-    // trailing numbers
+    if(/^\s*სულ[:\s]/.test(ln)||/მათ\s*შორის/.test(ln)||/საბანკო/.test(ln))inTable=false;
+    if(inTable&&ln.trim())tl.push(ln.trim());
+  }
+  // an item starts on a line that is just an index (№ alone) or "№ <description...>"
+  const isStart=t=>{t=t.trim();if(/^\d+$/.test(t))return true;const m=/^(\d+)\s+(.+)/.exec(t);return !!(m&&/[A-Za-zა-ჰ]/.test(m[2]));};
+  const recs=[];let cur=null;
+  for(const ln of tl){
+    if(isStart(ln)){if(cur!=null)recs.push(cur);const m=/^(\d+)\s+(.+)/.exec(ln);cur=m?m[2]:'';}
+    else if(cur!=null)cur=(cur+' '+ln).trim();
+  }
+  if(cur!=null)recs.push(cur);
+  const items=[];
+  for(const txt of recs){
+    const toks=txt.split(/\s+/);
     const nums=[];let j=toks.length-1;
-    while(j>0&&/^-?\d+(\.\d+)?$/.test(toks[j])){nums.unshift(parseFloat(toks[j]));j--;}
+    while(j>=0&&/^-?\d+(\.\d+)?$/.test(toks[j])){nums.unshift(parseFloat(toks[j]));j--;}
     if(nums.length<3)continue; // need qty, price, amount (vat optional)
-    const name=toks.slice(1,j+1).join(' ').replace(/\s*\/\s*$/,'').trim();
-    let qty,price,amount,vat=0;
-    if(nums.length>=4){qty=nums[0];price=nums[1];amount=nums[2];vat=nums[3];}
-    else{qty=nums[0];price=nums[1];amount=nums[2];}
+    const name=toks.slice(0,j+1).join(' ').replace(/\s*\/\s*$/,'').trim();
+    const n=nums.length;
+    const qty=nums[n-(n>=4?4:3)],price=nums[n-(n>=4?3:2)],amount=nums[n-(n>=4?2:1)],vat=n>=4?nums[n-1]:0;
     if(name)items.push({name,qty,price,amount,vat});
   }
   return {invNo,date,supplier,items};
