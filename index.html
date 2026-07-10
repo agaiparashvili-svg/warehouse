@@ -177,8 +177,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
       <div class="form-group"><label>როლი (რას აკეთებ საწყობში)</label>
         <select id="rg-role">
           <option value="orderer">🛒 შემკვეთი — წერს/ტვირთავს შეკვეთებს</option>
-          <option value="receiver">📥 საწყობის მიმღები — ადასტურებს ჩამოსვლას</option>
-          <option value="techreceiver">🔧 ტექნიკური მიმღები — ადასტურებს ტექნიკურ საწყობში</option>
+          <option value="techreceiver">🔧 ტექნიკური მიმღები — ადასტურებს მიღებას</option>
         </select>
       </div>
       <div id="rg-err" class="error-msg"></div><div id="rg-ok" class="success-msg"></div>
@@ -265,7 +264,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
     <!-- arrived inventory -->
     <div class="section" id="sec-arrivals">
       <div class="section-header"><h2>📥 ჩამოსული ინვენტარი</h2></div>
-      <div class="hint">ნაკადი: შემკვეთი → „🟢 ჩამოვიდა" → <b>საწყობის მიმღები</b> ადასტურებს → <b>ტექნიკური მიმღები</b> ადასტურებს ტექნიკურ საწყობში — და მხოლოდ მაშინ ემატება „📦 მარაგს".</div>
+      <div class="hint">ნაკადი: შემკვეთი → „🟢 ჩამოვიდა" → <b>ტექნიკური მიმღები</b> ადასტურებს რა მოვიდა და რა არა — და მხოლოდ მაშინ ემატება „📦 მარაგს".</div>
       <div class="toolbar">
         <button class="btn btn-good btn-sm" id="btn-sync" onclick="reconcileStock()">🔄 მარაგში სინქი</button>
         <input type="date" id="arr-from" onchange="renderArrivals()">
@@ -284,6 +283,28 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
         <input type="date" id="iss-to" onchange="renderIssues()">
       </div>
       <div id="issues-list"></div>
+    </div>
+
+    <!-- pools (separate module, invoice-driven) -->
+    <div class="section" id="sec-pools">
+      <div class="section-header"><h2>🏊 აუზები</h2></div>
+      <div class="hint">ცალკე მოდული აუზებისთვის — საწყობს არ ერევა. ატვირთე ინვოისი (PDF) → ავტომატურად დაითვლება რაოდენობა, თანხა და დღგ. მიღებას ადასტურებ იქვე.</div>
+      <div class="toolbar">
+        <button class="btn btn-primary btn-sm" id="btn-invoice" onclick="pickInvoice()">📄 ინვოისის ატვირთვა (PDF)</button>
+        <button class="btn btn-light btn-sm" id="btn-poolman" onclick="openPoolItem()">➕ ხელით</button>
+        <button class="btn btn-light btn-sm" onclick="exportPools()">📥 ექსპორტი</button>
+        <input type="file" id="invoice-file" accept="application/pdf,.pdf" style="display:none" onchange="onInvoicePicked(event)">
+      </div>
+      <div class="toolbar">
+        <input type="search" id="pools-search" placeholder="🔎 ძებნა (ნივთი/ინვოისი)…" oninput="renderPools()">
+        <select id="pools-filter" onchange="renderPools()">
+          <option value="all">ყველა</option>
+          <option value="pending">⏳ მიუღებელი</option>
+          <option value="received">✅ მიღებული</option>
+        </select>
+      </div>
+      <div class="stats-grid" id="pools-stats"></div>
+      <div id="pools-list"></div>
     </div>
 
     <!-- report -->
@@ -311,7 +332,6 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
           <option value="all">ყველა</option>
           <option value="pending">⏳ მოლოდინში</option>
           <option value="orderer">🛒 შემკვეთი</option>
-          <option value="receiver">📥 საწყობის მიმღები</option>
           <option value="techreceiver">🔧 ტექნიკური მიმღები</option>
           <option value="admin">👑 ადმინი</option>
         </select>
@@ -376,6 +396,33 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
   </div>
 </div>
 
+<!-- Pool item modal (manual) -->
+<div class="modal-overlay" id="m-pool">
+  <div class="modal">
+    <div class="modal-head"><h3 id="pl-title">ახალი ჩანაწერი — აუზები</h3><button class="modal-close" onclick="closeModal('m-pool')">✕</button></div>
+    <input type="hidden" id="pl-id">
+    <div class="form-group"><label>დასახელება</label><input type="text" id="pl-name" placeholder="მაგ. PoolLab2.0"></div>
+    <div class="modal-row">
+      <div class="form-group"><label>რაოდენობა</label><input type="number" step="0.01" min="0" id="pl-qty" placeholder="0"></div>
+      <div class="form-group"><label>ერთეული</label><input type="text" id="pl-unit" list="units" placeholder="ცალი"></div>
+    </div>
+    <div class="modal-row">
+      <div class="form-group"><label>💰 ფასი (ერთე.)</label><input type="number" step="0.01" min="0" id="pl-price" placeholder="0"></div>
+      <div class="form-group"><label>თანხა ₾</label><input type="number" step="0.01" min="0" id="pl-amount" placeholder="0"></div>
+    </div>
+    <div class="modal-row">
+      <div class="form-group"><label>დღგ ₾</label><input type="number" step="0.01" min="0" id="pl-vat" placeholder="0"></div>
+      <div class="form-group"><label>თარიღი</label><input type="date" id="pl-date"></div>
+    </div>
+    <div class="modal-row">
+      <div class="form-group"><label>ინვოისი №</label><input type="text" id="pl-inv" placeholder="არასავალდ."></div>
+      <div class="form-group"><label>🏭 მომწოდებელი</label><input type="text" id="pl-supplier" placeholder="არასავალდ."></div>
+    </div>
+    <div id="pl-err" class="error-msg"></div>
+    <button class="btn btn-primary btn-full" onclick="savePoolItem()">შენახვა</button>
+  </div>
+</div>
+
 <!-- Move (in/out) modal -->
 <div class="modal-overlay" id="m-move">
   <div class="modal">
@@ -406,6 +453,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 <datalist id="cats"><option>ქიმია</option><option>ინვენტარი</option><option>სათადარიგო ნაწილები</option><option>დასუფთავება</option><option>სხვა</option></datalist>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <script type="module">
 import{initializeApp}from"https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import{getAuth,createUserWithEmailAndPassword,signInWithEmailAndPassword,signOut,onAuthStateChanged,sendEmailVerification,sendPasswordResetEmail}from"https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
@@ -425,7 +473,7 @@ const auth=getAuth(fireApp);
 const db=getFirestore(fireApp);
 
 let currentUser=null,currentRole=null,currentName='';
-let products=[],orders=[],moves=[],allUsers=[];
+let products=[],orders=[],moves=[],allUsers=[],poolItems=[];
 let unsub=[];
 
 const $=id=>document.getElementById(id);
@@ -530,7 +578,7 @@ function launchApp(d){
 function buildNav(role){
   const nav=$('main-nav');nav.innerHTML='';
   if(role==='pending'){showSection('sec-pending');$('fab').style.display='none';return;}
-  const items=[['sec-dash','📊 მთავარი'],['sec-stock','📦 მარაგი'],['sec-orders','🛒 შეკვეთები'],['sec-arrivals','📥 ჩამოსული ინვენტარი'],['sec-issues','📤 გაცემები'],['sec-report','📈 რეპორტი']];
+  const items=[['sec-dash','📊 მთავარი'],['sec-stock','📦 მარაგი'],['sec-orders','🛒 შეკვეთები'],['sec-arrivals','📥 ჩამოსული ინვენტარი'],['sec-issues','📤 გაცემები'],['sec-pools','🏊 აუზები'],['sec-report','📈 რეპორტი']];
   if(role==='admin')items.push(['sec-users','👥 მომხმარებლები']);
   items.forEach(([id,label],i)=>{
     const el=document.createElement('div');
@@ -542,6 +590,8 @@ function buildNav(role){
   const sb=$('btn-sync');if(sb)sb.style.display=canEditOrders()?'':'none';
   const npb=$('btn-newprod');if(npb)npb.style.display=canEditOrders()?'':'none';
   const rb=$('btn-reset');if(rb)rb.style.display=isAdmin()?'':'none';
+  const iv=$('btn-invoice');if(iv)iv.style.display=canEditOrders()?'':'none';
+  const pm=$('btn-poolman');if(pm)pm.style.display=canEditOrders()?'':'none';
   showSection('sec-dash');updateFab('sec-dash');
   startListeners();
 }
@@ -564,8 +614,10 @@ function startListeners(){
     renderStock();renderDash();fillProductSelect();renderReport();
   },e=>toast('მარაგის ჩატვირთვა ვერ მოხერხდა','bad')));
   unsub.push(onSnapshot(query(collection(db,'wh_orders'),orderBy('createdAt','desc')),snap=>{
-    orders=snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.archived);
-    renderOrders();renderDash();renderArrivals();renderReport();
+    const all=snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.archived);
+    orders=all.filter(o=>o.module!=='pools');   // warehouse orders
+    poolItems=all.filter(o=>o.module==='pools'); // pools module (separate)
+    renderOrders();renderDash();renderArrivals();renderReport();renderPools();
   },e=>{}));
   unsub.push(onSnapshot(query(collection(db,'wh_moves'),orderBy('createdAt','desc')),snap=>{
     moves=snap.docs.map(d=>({id:d.id,...d.data()})).filter(d=>!d.archived);
@@ -595,7 +647,7 @@ function renderDash(){
     <div class="stat-card"><div class="num ${transit?'warn':''}">${transit}</div><div class="lbl">გზაშია</div></div>
     <div class="stat-card"><div class="num">${arrived}</div><div class="lbl">ჩამოვიდა</div></div>`;
   // read-only status overview — no confirmation here (that happens in 🛒 შეკვეთები)
-  const rcTxt={pending:'⏳ საწყობის მიმღები',wh:'⏳ ტექნიკური მიმღები',confirmed:'✅ მარაგში',rejected:'❌ უარყოფილი'};
+  const rcTxt={pending:'⏳ ტექნიკური მიმღები',wh:'⏳ ტექნიკური მიმღები',confirmed:'✅ მარაგში',rejected:'❌ უარყოფილი'};
   const pend=notArr.slice().sort((a,b)=>dnum(a.orderDate)-dnum(b.orderDate));
   $('dash-pending').innerHTML=pend.length?pend.map(o=>{
     const st=ostat(o);const arr=arrivedTarget(o);const rc=receiptOf(o);
@@ -660,7 +712,7 @@ window.renderOrders=function(){
   if(term)list=list.filter(o=>orderName(o).toLowerCase().includes(term)||(o.sourceFile||'').toLowerCase().includes(term)||(o.purpose||'').toLowerCase().includes(term));
   if(!list.length){$('orders-list').innerHTML=emptyBox('🛒','შეკვეთა არ მოიძებნა.');return;}
   const ed=canEditOrders(),mk=canMark();
-  const rcLbl={pending:'⏳ საწყობის მიმღები',wh:'⏳ ტექნიკური მიმღები',confirmed:'✅ მიღებულია (მარაგში)',rejected:'❌ უარყოფილია'};
+  const rcLbl={pending:'⏳ ტექნიკური მიმღები',wh:'⏳ ტექნიკური მიმღები',confirmed:'✅ მიღებულია (მარაგში)',rejected:'❌ უარყოფილია'};
   const rows=list.map(o=>{
     const st=ostat(o);const arr=arrivedTarget(o);const rc=receiptOf(o);
     const meta=[o.orderDate?'📅 '+fmtDate(o.orderDate):'',o.department?'🏢 '+esc(o.department):'',o.supplier?'🏭 '+esc(o.supplier):'',o.sourceFile?'📄 '+esc(o.sourceFile):'',o.note?'📝 '+esc(o.note):''].filter(Boolean).join(' · ');
@@ -728,8 +780,8 @@ async function applyArrival(id,opts){
   else aq=(o.arrivedQty!=null&&o.arrivedQty!=='')?num(o.arrivedQty):null;
   const isArr=(status==='arrived'||status==='partial');
   const arrAmt=isArr?(aq!=null?aq:(status==='arrived'?num(o.qty):0)):0;
-  // receipt: keep progress if already advanced (wh/confirmed); otherwise start at 'pending'
-  let receipt=isArr?(['confirmed','wh'].includes(receiptOf(o))?receiptOf(o):'pending'):null;
+  // receipt: keep 'confirmed' if already in stock; otherwise 'pending' (awaiting technical receiver)
+  let receipt=isArr?(receiptOf(o)==='confirmed'?'confirmed':'pending'):null;
   const merged={...o,status,arrivedQty:isArr?arrAmt:null,receipt};
   try{
     const r=await reconcileStockTo(merged,stockTarget(merged),'მიღება დადასტურდა','სტატუსი/რაოდენობა შეიცვალა');
@@ -748,20 +800,21 @@ window.setArrivedQty=function(id,val){
   applyArrival(id,{status,arrivedQty:val});
 };
 // two-stage receiving: stage 'wh' = warehouse receiver, stage 'tech' = technical receiver (adds to stock)
-window.confirmReceipt=async function(id,stage,accept){
+// single-stage receiving — only the technical receiver confirms (adds to stock)
+window.confirmReceipt=async function(id,accept){
   const o=orders.find(x=>x.id===id);if(!o)return;
   try{
+    const tcEl=$('tcmt_'+id);const techComment=tcEl?tcEl.value.trim():undefined;
     let receipt,extra;
-    const tcEl=$('tcmt_'+id);const techComment=(stage==='tech'&&tcEl)?tcEl.value.trim():undefined;
-    if(!accept){receipt='rejected';extra={rejectedBy:currentName,rejectedAt:serverTimestamp(),rejectedStage:stage};if(techComment!==undefined)extra.techComment=techComment;}
-    else if(stage==='wh'){receipt='wh';extra={whReceivedBy:currentName,whReceivedAt:serverTimestamp()};}
-    else{receipt='confirmed';extra={receivedBy:currentName,receivedAt:serverTimestamp()};if(techComment!==undefined)extra.techComment=techComment;}
+    if(!accept){receipt='rejected';extra={rejectedBy:currentName,rejectedAt:serverTimestamp()};}
+    else{receipt='confirmed';extra={receivedBy:currentName,receivedAt:serverTimestamp()};}
+    if(techComment!==undefined)extra.techComment=techComment;
     const merged={...o,receipt};
-    const r=await reconcileStockTo(merged,stockTarget(merged),'მიღება დადასტურდა (ტექნიკური)','მიღება გაუქმდა');
+    const r=await reconcileStockTo(merged,stockTarget(merged),'მიღება დადასტურდა','მიღება უარყოფილია');
     const data={receipt,appliedQty:r.appliedQty,...extra};
     if(r.productId)data.productId=r.productId;
     await updateDoc(doc(db,'wh_orders',id),data);
-    toast(!accept?'მიღება უარყოფილია':(stage==='wh'?'✓ დადასტურდა — გადაეცა ტექნიკურ მიმღებს':'✓ მიღება დადასტურდა · მარაგში დაემატა'),accept?'good':'warn');
+    toast(accept?'✓ მიღება დადასტურდა · მარაგში დაემატა':'მიღება უარყოფილია',accept?'good':'warn');
   }catch(e){toast('შეცდომა: '+e.message,'bad');}
 };
 // repair tool: reconcile CONFIRMED receipts into stock (idempotent via appliedQty)
@@ -813,19 +866,13 @@ window.renderArrivals=function(){
     if(from&&d<new Date(from+'T00:00:00'))return false;if(to&&d>new Date(to+'T23:59:59'))return false;return true;};
   const ag=o=>arrCard(o,'');
   const arrived=orders.filter(o=>{const s=ostat(o);return s==='arrived'||s==='partial';}).filter(inRange);
-  const stage1=arrived.filter(o=>receiptOf(o)==='pending').sort((a,b)=>dnum(a.arrivedAt||a.orderDate)-dnum(b.arrivedAt||b.orderDate));
-  const stage2=arrived.filter(o=>receiptOf(o)==='wh').sort((a,b)=>dnum(a.whReceivedAt||a.arrivedAt)-dnum(b.whReceivedAt||b.arrivedAt));
+  const pending=arrived.filter(o=>{const r=receiptOf(o);return r==='pending'||r==='wh';}).sort((a,b)=>dnum(a.arrivedAt||a.orderDate)-dnum(b.arrivedAt||b.orderDate));
   const confirmed=arrived.filter(o=>receiptOf(o)==='confirmed').sort((a,b)=>dnum(b.receivedAt||b.arrivedAt)-dnum(a.receivedAt||a.arrivedAt));
-  const cf=canConfirm(),cft=canConfirmTech();
-  const isTech=currentRole==='techreceiver';
+  const cft=canConfirmTech();
   let html='';
-  // stage 1 — warehouse receiver. Tech receiver sees these read-only ("ღიად დარჩენილი") until warehouse confirms.
-  const s1title=isTech?'📋 ღიად დარჩენილი (საწყობის მიღების მოლოდინში)':'⏳ საწყობის მიმღების დასადასტურებელი';
-  html+=`<h3 style="font-size:14px;font-weight:800;color:var(--warn);margin:4px 0 10px">${s1title} (${stage1.length})</h3>`;
-  html+=stage1.length?stage1.map(o=>arrCard(o,cf?`<div class="row-actions"><button class="btn btn-good btn-sm" onclick="confirmReceipt('${o.id}','wh',true)">✅ მივიღე</button><button class="btn btn-danger btn-sm" onclick="confirmReceipt('${o.id}','wh',false)">❌ არ მივიღე</button></div>`:'<div class="row-sub muted">ელოდება საწყობის მიმღების დადასტურებას</div>')).join(''):'<p class="muted" style="margin-bottom:14px">ცარიელია ✓</p>';
-  // stage 2 — technical receiver (this confirmation adds to stock). tech can add a comment (e.g. "სხვა ჩამოვიდა").
-  html+=`<h3 style="font-size:14px;font-weight:800;color:#b45309;margin:18px 0 10px">🔧 ტექნიკური მიმღების დასადასტურებელი (${stage2.length})</h3>`;
-  html+=stage2.length?stage2.map(o=>arrCard(o,cft?`<div style="margin-top:8px"><input id="tcmt_${o.id}" type="text" placeholder="🎯 კომენტარი (მაგ. სხვა ჩამოვიდა)" value="${esc(o.techComment||'')}" style="width:100%;margin-bottom:8px"><div class="row-actions"><button class="btn btn-good btn-sm" onclick="confirmReceipt('${o.id}','tech',true)">✅ მივიღე ტექნიკურ საწყობში</button><button class="btn btn-danger btn-sm" onclick="confirmReceipt('${o.id}','tech',false)">❌ არ მივიღე</button></div></div>`:'<div class="row-sub muted">ელოდება ტექნიკური მიმღების დადასტურებას</div>')).join(''):'<p class="muted" style="margin-bottom:14px">ცარიელია ✓</p>';
+  // pending — technical receiver confirms (adds to stock); can add a comment (e.g. "სხვა ჩამოვიდა")
+  html+=`<h3 style="font-size:14px;font-weight:800;color:#b45309;margin:4px 0 10px">🔧 დასადასტურებელი — ტექნიკური მიმღები (${pending.length})</h3>`;
+  html+=pending.length?pending.map(o=>arrCard(o,cft?`<div style="margin-top:8px"><input id="tcmt_${o.id}" type="text" placeholder="🎯 კომენტარი (მაგ. სხვა ჩამოვიდა)" value="${esc(o.techComment||'')}" style="width:100%;margin-bottom:8px"><div class="row-actions"><button class="btn btn-good btn-sm" onclick="confirmReceipt('${o.id}',true)">✅ მივიღე ტექნიკურ საწყობში</button><button class="btn btn-danger btn-sm" onclick="confirmReceipt('${o.id}',false)">❌ არ მივიღე</button></div></div>`:'<div class="row-sub muted">ელოდება ტექნიკური მიმღების დადასტურებას</div>')).join(''):'<p class="muted" style="margin-bottom:14px">დასადასტურებელი არაფერია ✓</p>';
   // confirmed (in stock)
   html+=`<h3 style="font-size:14px;font-weight:800;color:var(--good);margin:18px 0 10px">✅ მიღებული — მარაგში (${confirmed.length})</h3>`;
   html+=confirmed.length?confirmed.map(o=>ag(o)).join(''):'<p class="muted">ჯერ არაფერი მიღებულა</p>';
@@ -888,7 +935,7 @@ window.renderReport=function(){
     <div class="stat-card"><div class="num">${fmtN(tOrdered)}</div><div class="lbl">სულ შეკვეთილი</div></div>
     <div class="stat-card"><div class="num" style="color:var(--good)">${fmtN(tArr)}</div><div class="lbl">სულ ჩამოსული</div></div>
     <div class="stat-card"><div class="num" style="color:var(--bad)">${fmtN(tIss)}</div><div class="lbl">სულ გაცემული</div></div>
-    <div class="stat-card"><div class="num" style="color:var(--accent)">${fmtN(tValue)}</div><div class="lbl">ნაშთის ღირებულება ₾</div></div>`;
+    <div class="stat-card"><div class="num" style="color:var(--accent)">${fmtN(tValue)} ₾</div><div class="lbl">💰 სულ ღირებულება (ნაშთი)</div></div>`;
   if(!rows.length){$('report-list').innerHTML=emptyBox('📈','მონაცემი არ მოიძებნა.');return;}
   $('report-list').innerHTML=rows.map(e=>{
     const ordDet=e.orders.length?e.orders.slice().sort((a,b)=>dnum(b.orderDate)-dnum(a.orderDate)).map(o=>{const s=ostat(o);
@@ -982,6 +1029,160 @@ window.archiveAndReset=async function(){
   }catch(e){toast('შეცდომა: '+e.message,'bad');}
 };
 
+// ---------- POOLS (🏊 separate module — invoice driven) ----------
+window.renderPools=function(){
+  if(!$('pools-list'))return;
+  const term=($('pools-search')?$('pools-search').value:'').trim().toLowerCase();
+  const filter=$('pools-filter')?$('pools-filter').value:'all';
+  let list=poolItems.slice().sort((a,b)=>dnum(b.orderDate||b.createdAt)-dnum(a.orderDate||a.createdAt));
+  if(filter==='received')list=list.filter(o=>o.received);
+  else if(filter==='pending')list=list.filter(o=>!o.received);
+  if(term)list=list.filter(o=>orderName(o).toLowerCase().includes(term)||(o.invoiceNo||'').toLowerCase().includes(term));
+  const tQty=poolItems.reduce((s,o)=>s+num(o.qty),0);
+  const tAmt=poolItems.reduce((s,o)=>s+num(o.amount),0);
+  const tVat=poolItems.reduce((s,o)=>s+num(o.vat),0);
+  const recv=poolItems.filter(o=>o.received).length;
+  $('pools-stats').innerHTML=`
+    <div class="stat-card"><div class="num">${poolItems.length}</div><div class="lbl">ჩანაწერი (მიღ.: ${recv})</div></div>
+    <div class="stat-card"><div class="num">${fmtN(tQty)}</div><div class="lbl">სულ რაოდენობა</div></div>
+    <div class="stat-card"><div class="num" style="color:var(--accent)">${fmtN(tAmt)} ₾</div><div class="lbl">სულ თანხა</div></div>
+    <div class="stat-card"><div class="num muted">${fmtN(tVat)} ₾</div><div class="lbl">მ.შ. დღგ</div></div>`;
+  if(!list.length){$('pools-list').innerHTML=emptyBox('🏊','ჩანაწერი არ არის. ატვირთე ინვოისი 📄 ან დაამატე ხელით ➕.');return;}
+  const ed=canEditOrders(),cf=canConfirmTech();
+  $('pools-list').innerHTML=list.map(o=>{
+    const meta=[o.invoiceNo?'🧾 '+esc(o.invoiceNo):'',o.orderDate?fmtDate(o.orderDate):'',o.supplier?'🏭 '+esc(o.supplier):''].filter(Boolean).join(' · ');
+    return `<div class="list-row ${o.received?'arrived':''}">
+      <div class="row-top">
+        <div><div class="row-name">${esc(orderName(o))}</div>
+        <div class="row-sub">${fmtN(num(o.qty))} ${esc(o.unit||'ცალი')} × ${fmtN(num(o.price))} ₾</div>
+        ${meta?'<div class="row-sub">'+meta+'</div>':''}</div>
+        <div class="row-stock"><div class="v">${fmtN(num(o.amount))} ₾</div><div class="u">დღგ ${fmtN(num(o.vat))}</div></div>
+      </div>
+      <div class="row-actions">
+        ${o.received?'<span class="badge arrived">✅ მიღებული</span>':'<span class="badge notarrived">⏳ მიუღებელი</span>'}
+        ${(cf||ed)?`<button class="btn ${o.received?'btn-light':'btn-good'} btn-sm" onclick="togglePoolReceived('${o.id}')">${o.received?'გაუქმება':'✅ მიღება'}</button>`:''}
+        ${ed?`<button class="btn btn-light btn-sm" onclick="openPoolItem('${o.id}')">✏️</button><button class="btn btn-danger btn-sm" onclick="delPoolItem('${o.id}')">🗑</button>`:''}
+      </div></div>`;
+  }).join('');
+};
+window.togglePoolReceived=async function(id){
+  const o=poolItems.find(x=>x.id===id);if(!o)return;
+  try{await updateDoc(doc(db,'wh_orders',id),{received:!o.received,receivedBy:currentName,receivedAt:serverTimestamp()});
+    toast(!o.received?'✅ მიღება დადასტურდა':'მიღება გაუქმდა','good');}
+  catch(e){toast('შეცდომა: '+e.message,'bad');}
+};
+window.openPoolItem=function(id){
+  const o=id?poolItems.find(x=>x.id===id):null;
+  $('pl-title').textContent=o?'ჩანაწერის რედაქტირება':'ახალი ჩანაწერი — აუზები';
+  $('pl-id').value=o?o.id:'';
+  $('pl-name').value=o?orderName(o):'';$('pl-qty').value=o?num(o.qty):'';$('pl-unit').value=o?(o.unit||'ცალი'):'ცალი';
+  $('pl-price').value=o&&o.price!=null?num(o.price):'';$('pl-amount').value=o&&o.amount!=null?num(o.amount):'';
+  $('pl-vat').value=o&&o.vat!=null?num(o.vat):'';
+  $('pl-date').value=o&&o.orderDate?toInput(o.orderDate):new Date().toISOString().slice(0,10);
+  $('pl-inv').value=o?(o.invoiceNo||''):'';$('pl-supplier').value=o?(o.supplier||''):'';
+  $('pl-err').textContent='';openModal('m-pool');
+};
+window.savePoolItem=async function(){
+  const id=$('pl-id').value,name=$('pl-name').value.trim();
+  if(!name){$('pl-err').textContent='დასახელება სავალდებულოა';return;}
+  const qty=num($('pl-qty').value),price=num($('pl-price').value);
+  const amtRaw=$('pl-amount').value;const amount=amtRaw===''?qty*price:num(amtRaw);
+  const data={itemName:name,productName:name,module:'pools',qty,unit:$('pl-unit').value.trim()||'ცალი',
+    price,amount,vat:num($('pl-vat').value),invoiceNo:$('pl-inv').value.trim(),supplier:$('pl-supplier').value.trim(),
+    orderDate:$('pl-date').value?new Date($('pl-date').value):null,updatedAt:serverTimestamp()};
+  try{
+    if(id){await updateDoc(doc(db,'wh_orders',id),data);toast('განახლდა ✓','good');}
+    else{data.received=false;data.createdAt=serverTimestamp();data.createdBy=currentUser.uid;data.createdByName=currentName;await addDoc(collection(db,'wh_orders'),data);toast('ჩანაწერი დაემატა ✓','good');}
+    closeModal('m-pool');
+  }catch(e){$('pl-err').textContent='შეცდომა: '+e.message;}
+};
+window.delPoolItem=async function(id){
+  const o=poolItems.find(x=>x.id===id);if(!o)return;
+  if(!confirm(`წავშალო „${orderName(o)}"?`))return;
+  try{await deleteDoc(doc(db,'wh_orders',id));toast('წაიშალა','warn');}catch(e){toast('შეცდომა','bad');}
+};
+window.exportPools=function(){
+  if(!window.XLSX){toast('Excel-ის ბიბლიოთეკა იტვირთება','warn');return;}
+  if(!poolItems.length){toast('ჩანაწერი არ არის','warn');return;}
+  const head=['№','თარიღი','ინვოისი','მომწოდებელი','დასახელება','რაოდენობა','ერთ.','ფასი ₾','თანხა ₾','დღგ ₾','მიღება'];
+  const list=poolItems.slice().sort((a,b)=>dnum(a.orderDate)-dnum(b.orderDate));
+  const aoa=[head];
+  list.forEach((o,i)=>aoa.push([i+1,o.orderDate?fmtDate(o.orderDate):'',o.invoiceNo||'',o.supplier||'',orderName(o),num(o.qty),o.unit||'',num(o.price),num(o.amount),num(o.vat),o.received?'კი':'არა']));
+  aoa.push(['','ჯამი','','','',list.reduce((s,o)=>s+num(o.qty),0),'','',list.reduce((s,o)=>s+num(o.amount),0),list.reduce((s,o)=>s+num(o.vat),0),'']);
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols']=[{wch:5},{wch:12},{wch:16},{wch:20},{wch:34},{wch:10},{wch:7},{wch:9},{wch:10},{wch:9},{wch:9}];
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'აუზები');
+  XLSX.writeFile(wb,'აუზები_ინვოისები_'+new Date().toISOString().slice(0,10)+'.xlsx');
+  toast('ფაილი ჩამოიტვირთა ✓','good');
+};
+// ---- PDF invoice import ----
+window.pickInvoice=function(){if(!window.pdfjsLib){toast('PDF ბიბლიოთეკა იტვირთება, სცადეთ ისევ','warn');return;}$('invoice-file').click();};
+function parseInvoiceLines(lines){
+  // header: "ინვოისი № XXX, DD.MM.YYYY"
+  let invNo='',date=null,supplier='';
+  for(const ln of lines){
+    let m=/ინვოისი\s*№?\s*([A-Za-z0-9\-\/]+)[,\s]+(\d{1,2}\.\d{1,2}\.\d{4})/.exec(ln);
+    if(m){invNo=m[1];const d=m[2].split('.');date=new Date(+d[2],+d[1]-1,+d[0]);}
+    m=/შემსრულებელი[:\s]+(.+)/.exec(ln);if(m)supplier=m[1].trim();
+  }
+  // items: lines that start with an index and end with >=3 trailing numbers (qty price amount [vat])
+  const items=[];let inTable=false;
+  for(const ln of lines){
+    if(/დასახელება/.test(ln)&&/რაოდენობა/.test(ln)){inTable=true;continue;}
+    if(/^\s*სულ[:\s]/.test(ln)||/მ\.?შ\.?\s*დღგ/.test(ln)||/საბანკო/.test(ln))inTable=false;
+    if(!inTable)continue;
+    const toks=ln.trim().split(/\s+/);
+    if(toks.length<5)continue;
+    if(!/^\d+$/.test(toks[0]))continue; // row index
+    // trailing numbers
+    const nums=[];let j=toks.length-1;
+    while(j>0&&/^-?\d+(\.\d+)?$/.test(toks[j])){nums.unshift(parseFloat(toks[j]));j--;}
+    if(nums.length<3)continue; // need qty, price, amount (vat optional)
+    const name=toks.slice(1,j+1).join(' ').replace(/\s*\/\s*$/,'').trim();
+    let qty,price,amount,vat=0;
+    if(nums.length>=4){qty=nums[0];price=nums[1];amount=nums[2];vat=nums[3];}
+    else{qty=nums[0];price=nums[1];amount=nums[2];}
+    if(name)items.push({name,qty,price,amount,vat});
+  }
+  return {invNo,date,supplier,items};
+}
+window.onInvoicePicked=async function(ev){
+  const file=ev.target.files&&ev.target.files[0];ev.target.value='';
+  if(!file)return;
+  if(!window.pdfjsLib){toast('PDF ბიბლიოთეკა არ ჩაიტვირთა','bad');return;}
+  toast('იკითხება ინვოისი…','info');
+  try{
+    pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+    const buf=await file.arrayBuffer();
+    const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+    let lines=[];
+    for(let pn=1;pn<=pdf.numPages;pn++){
+      const page=await pdf.getPage(pn);const tc=await page.getTextContent();
+      // reconstruct lines by y position
+      const rows={};
+      tc.items.forEach(it=>{const y=Math.round(it.transform[5]);const x=it.transform[4];(rows[y]=rows[y]||[]).push([x,it.str]);});
+      Object.keys(rows).map(Number).sort((a,b)=>b-a).forEach(y=>{
+        const ln=rows[y].sort((a,b)=>a[0]-b[0]).map(p=>p[1]).join(' ').replace(/\s+/g,' ').trim();
+        if(ln)lines.push(ln);
+      });
+    }
+    const {invNo,date,supplier,items}=parseInvoiceLines(lines);
+    if(!items.length){toast('ინვოისში ნივთები ვერ მოიძებნა — სცადე ხელით ➕','warn');return;}
+    const tot=items.reduce((s,it)=>s+num(it.amount),0);
+    if(!confirm(`ინვოისი: ${invNo||'—'}\nთარიღი: ${date?date.toLocaleDateString('ka-GE'):'—'}\nმომწოდებელი: ${supplier||'—'}\nნაპოვნია ${items.length} ნივთი, სულ ${fmtN(tot)} ₾.\n\nავტვირთო აუზების მოდულში?`))return;
+    let ok=0;
+    for(const it of items){
+      await addDoc(collection(db,'wh_orders'),{
+        module:'pools',itemName:it.name,productName:it.name,qty:it.qty,unit:'ცალი',
+        price:it.price,amount:it.amount,vat:it.vat,invoiceNo:invNo,supplier,orderDate:date||null,
+        received:false,createdBy:currentUser.uid,createdByName:currentName,createdAt:serverTimestamp(),updatedAt:serverTimestamp()
+      });ok++;
+    }
+    toast('✓ აიტვირთა '+ok+' ნივთი (აუზები)','good');
+    activateSection('sec-pools',[...document.querySelectorAll('.nav-item')].find(n=>n.textContent.includes('აუზ'))||document.querySelector('.nav-item'));
+  }catch(e){toast('შეცდომა ინვოისის წაკითხვისას: '+e.message,'bad');}
+};
+
 function emptyBox(ico,txt){return `<div class="empty"><span class="ico">${ico}</span><p>${txt}</p></div>`;}
 
 // ---------- USERS (admin) — warehouse-only accounts (wh_users) ----------
@@ -1013,7 +1214,7 @@ window.renderUsers=function(){
         <select onchange="setRole('${u.id}',this.value)" style="width:auto;flex:0 1 auto;font-size:13px;padding:8px 10px">
           <option value="pending" ${wr==='pending'?'selected':''}>⏳ მოლოდინში</option>
           <option value="orderer" ${wr==='orderer'?'selected':''}>🛒 შემკვეთი</option>
-          <option value="receiver" ${wr==='receiver'?'selected':''}>📥 საწყობის მიმღები</option>
+          ${wr==='receiver'?'<option value="receiver" selected>📥 საწყობის მიმღები (ძველი)</option>':''}
           <option value="techreceiver" ${wr==='techreceiver'?'selected':''}>🔧 ტექნიკური მიმღები</option>
           <option value="admin" ${wr==='admin'?'selected':''}>👑 ადმინი</option>
         </select>
