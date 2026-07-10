@@ -1118,32 +1118,41 @@ window.exportPools=function(){
 // ---- PDF invoice import ----
 window.pickInvoice=function(){if(!window.pdfjsLib){toast('PDF ბიბლიოთეკა იტვირთება, სცადეთ ისევ','warn');return;}$('invoice-file').click();};
 function parseInvoiceLines(lines){
-  // header
+  const NUM=/^-?\d+(\.\d+)?$/;
   let invNo='',date=null,supplier='';
   for(const ln of lines){
     let m=/ინვოისი\s*№?\s*([A-Za-z0-9\-\/]+)[,\s]+(\d{1,2}\.\d{1,2}\.\d{4})/.exec(ln);
     if(m){invNo=m[1];const d=m[2].split('.');date=new Date(+d[2],+d[1]-1,+d[0]);}
-    m=/შემსრულებელი[:\s]+(.+)/.exec(ln);if(m)supplier=m[1].trim();
+    m=/შემსრულებელი[:\s]+(.+)/.exec(ln.trim());if(m&&m[1].trim())supplier=m[1].trim();
   }
-  // an item starts on a line that is just an index (№ alone) or "№ <description...>"
-  const isStart=t=>{t=t.trim();if(/^\d+$/.test(t))return true;const m=/^(\d+)\s+(.+)/.exec(t);return !!(m&&/[A-Za-zა-ჰ]/.test(m[2]));};
-  const recs=[];let cur=null,stop=false;
-  for(const ln of lines){
-    if(/^\s*სულ[:\s]/.test(ln)||/საბანკო/.test(ln)||/მათ\s*შორის/.test(ln))stop=true;
-    if(stop)continue;
-    if(isStart(ln)){if(cur!=null)recs.push(cur);const m=/^(\d+)\s+(.+)/.exec(ln.trim());cur=m?m[2]:'';}
-    else if(cur!=null)cur=(cur+' '+ln).trim();
-  }
-  if(cur!=null)recs.push(cur);
+  // cut off at totals / bank section
+  const L=[];for(const ln of lines){if(/^\s*სულ[:\s]/.test(ln)||/საბანკო/.test(ln)||/მათ\s*შორის/.test(ln))break;L.push(ln.trim());}
+  const clean=s=>s.replace(/\s+/g,' ').replace(/\s*\/\s*$/,'').trim();
+  const isNum=ln=>{const t=ln.split(/\s+/);return t.length>=4&&t.every(x=>NUM.test(x));};
+  const isDesc=ln=>{if(!ln.trim()||isNum(ln))return false;return !/დასახელება|დამკვეთი|შემსრულებელი|ინვოისი/.test(ln);};
   const items=[];
-  for(const txt of recs){
-    const toks=txt.split(/\s+/);
-    const nums=[];let j=toks.length-1;
-    while(j>=0&&/^-?\d+(\.\d+)?$/.test(toks[j])){nums.unshift(parseFloat(toks[j]));j--;}
-    if(nums.length<3)continue; // need qty, price, amount (vat optional)
-    const name=toks.slice(0,j+1).join(' ').replace(/\s*\/\s*$/,'').trim();
-    const n=nums.length;
-    const qty=nums[n-(n>=4?4:3)],price=nums[n-(n>=4?3:2)],amount=nums[n-(n>=4?2:1)],vat=n>=4?nums[n-1]:0;
+  // Format A — full single line: "№ <desc has letters> qty price amount [vat]"
+  for(const ln of L){
+    const t=ln.split(/\s+/);
+    if(t.length<5||!/^\d+$/.test(t[0])||!/[A-Za-zა-ჰ]/.test(ln))continue;
+    let j=t.length-1;const nums=[];while(j>0&&NUM.test(t[j])){nums.unshift(parseFloat(t[j]));j--;}
+    if(nums.length<3)continue;
+    const name=clean(t.slice(1,j+1).join(' '));const n=nums.length;
+    const qty=nums[n>=4?n-4:n-3],price=nums[n>=4?n-3:n-2],amount=nums[n>=4?n-2:n-1],vat=n>=4?nums[n-1]:0;
+    if(name)items.push({name,qty,price,amount,vat});
+  }
+  if(items.length)return {invNo,date,supplier,items};
+  // Format B — number line "№ qty price amount [vat]" with description split before/after it
+  const numIdx=[];for(let i=0;i<L.length;i++)if(isNum(L[i]))numIdx.push(i);
+  for(let k=0;k<numIdx.length;k++){
+    const i=numIdx[k],t=L[i].split(/\s+/);
+    const qty=parseFloat(t[1]),price=parseFloat(t[2]),amount=parseFloat(t[3]),vat=t.length>=5?parseFloat(t[4]):0;
+    const part1=(i-1>=0&&isDesc(L[i-1]))?L[i-1]:'';
+    const nxt=k+1<numIdx.length?numIdx[k+1]:L.length;
+    let between=L.slice(i+1,nxt);
+    if(k+1<numIdx.length)between=between.slice(0,-1); // last line before next number = next item's part1
+    const part2=between.filter(isDesc);
+    const name=clean((part1+' '+part2.join(' ')).trim());
     if(name)items.push({name,qty,price,amount,vat});
   }
   return {invNo,date,supplier,items};
