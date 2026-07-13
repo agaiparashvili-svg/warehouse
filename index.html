@@ -498,8 +498,8 @@ const ROLE_LBL={admin:'ადმინი',orderer:'შემკვეთი',re
 const isAdmin=()=>currentRole==='admin';
 const canEditOrders=()=>['admin','orderer','operator'].includes(currentRole); // create / import / edit / delete / mark status
 const canMark=()=>canEditOrders();                                            // set arrival status (orderer/admin)
-const canConfirm=()=>['admin','receiver'].includes(currentRole);              // stage 1: warehouse receiver
-const canConfirmTech=()=>['admin','techreceiver'].includes(currentRole);      // stage 2: technical receiver → stock
+const canConfirm=()=>['admin','receiver'].includes(currentRole);
+const canConfirmTech=()=>['admin','techreceiver','receiver'].includes(currentRole); // receiving confirmation (adds to stock)
 function statusSelect(id,cur){
   return `<select class="status-sel ${cur}" onchange="setOrderStatus('${id}',this.value)">`+
     ST_KEYS.map(k=>`<option value="${k}" ${k===cur?'selected':''}>${ST[k].e} ${ST[k].l}</option>`).join('')+`</select>`;
