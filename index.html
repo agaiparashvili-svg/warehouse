@@ -216,12 +216,16 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
       <div class="section-header"><h2>📊 მთავარი</h2></div>
       <div class="stats-grid" id="dash-stats"></div>
       <div class="card">
-        <h3 style="font-size:15px;font-weight:800;margin-bottom:12px;color:var(--bad)">⏳ ჩამოუსვლელი შეკვეთები</h3>
+        <h3 style="font-size:15px;font-weight:800;margin-bottom:12px;color:var(--bad)">⏳ მისაღები / ჩამოუსვლელი</h3>
         <div id="dash-pending"></div>
       </div>
       <div class="card">
         <h3 style="font-size:15px;font-weight:800;margin-bottom:12px;color:var(--warn)">⚠️ დაბალი მარაგი</h3>
         <div id="dash-low"></div>
+      </div>
+      <div class="card">
+        <h3 style="font-size:15px;font-weight:800;margin-bottom:12px;color:var(--accent)">🕘 ბოლო აქტივობა (აუდიტი)</h3>
+        <div id="dash-audit"></div>
       </div>
     </div>
 
@@ -636,34 +640,47 @@ function stockState(p){const s=num(p.stock);if(s<=0)return 'out';if(num(p.minSto
 
 // ---------- DASHBOARD ----------
 function orderName(o){return o.itemName||o.productName||'(უსახელო)';}
+function sameMonth(ts){if(!ts)return false;const d=ts.toDate?ts.toDate():new Date(ts);if(isNaN(d))return false;const n=new Date();return d.getFullYear()===n.getFullYear()&&d.getMonth()===n.getMonth();}
 function renderDash(){
   if(!$('dash-stats'))return;
-  const notArr=orders.filter(o=>ostat(o)!=='arrived');
-  const transit=orders.filter(o=>ostat(o)==='transit').length;
-  const arrived=orders.filter(o=>ostat(o)==='arrived').length;
+  const open=orders.filter(o=>{const r=receiptOf(o);return r!=='confirmed'&&r!=='rejected';});
   const low=products.filter(p=>stockState(p)!=='ok');
+  // this-month spend: confirmed orders (arrived×price) + received pool invoice amounts
+  let spend=0;
+  orders.forEach(o=>{if(receiptOf(o)==='confirmed'&&sameMonth(o.receivedAt||o.arrivedAt))spend+=arrivedTarget(o)*num(o.price);});
+  poolItems.forEach(o=>{if(o.received&&sameMonth(o.receivedAt||o.orderDate))spend+=num(o.amount);});
+  const stockValue=products.reduce((s,p)=>s+num(p.stock)*num(p.price),0);
   $('dash-stats').innerHTML=`
-    <div class="stat-card"><div class="num ${notArr.length?'bad':''}">${notArr.length}</div><div class="lbl">ჩამოუსვლელი</div></div>
-    <div class="stat-card"><div class="num ${transit?'warn':''}">${transit}</div><div class="lbl">გზაშია</div></div>
-    <div class="stat-card"><div class="num">${arrived}</div><div class="lbl">ჩამოვიდა</div></div>`;
-  // read-only status overview — no confirmation here (that happens in 🛒 შეკვეთები)
-  const rcTxt={pending:'⏳ ტექნიკური მიმღები',wh:'⏳ ტექნიკური მიმღები',confirmed:'✅ მარაგში',rejected:'❌ უარყოფილი'};
-  const pend=notArr.slice().sort((a,b)=>dnum(a.orderDate)-dnum(b.orderDate));
+    <div class="stat-card"><div class="num ${open.length?'bad':''}">${open.length}</div><div class="lbl">⏳ მისაღები</div></div>
+    <div class="stat-card"><div class="num ${low.length?'warn':''}">${low.length}</div><div class="lbl">🔴 დაბალი მარაგი</div></div>
+    <div class="stat-card"><div class="num" style="color:var(--accent)">${fmtN(spend)} ₾</div><div class="lbl">💰 ამ თვის ხარჯი</div></div>
+    <div class="stat-card"><div class="num">${fmtN(stockValue)} ₾</div><div class="lbl">📦 მარაგის ღირებულება</div></div>`;
+  // pending / receiving control — read-only overview with discrepancy
+  const pend=open.slice().sort((a,b)=>dnum(a.orderDate)-dnum(b.orderDate));
   $('dash-pending').innerHTML=pend.length?pend.map(o=>{
-    const st=ostat(o);const arr=arrivedTarget(o);const rc=receiptOf(o);
+    const st=ostat(o);const arr=arrivedTarget(o);const short=num(o.qty)-arr;
     return `<div class="list-row ${st}" style="margin-bottom:8px">
       <div class="row-top">
         <div><div class="row-name">${esc(orderName(o))}</div>
-        <div class="row-sub">${o.orderDate?fmtDate(o.orderDate)+' · ':''}${o.department?esc(o.department)+' · ':''}სულ: ${fmtN(num(o.qty))} ${esc(o.unit||'')}</div>
-        ${arr>0?'<div class="row-sub" style="color:var(--good);font-weight:700">მიღებული: '+fmtN(arr)+' '+esc(o.unit||'')+(arr<num(o.qty)?' · ნაწილობრივ':'')+'</div>':''}</div>
-        <div style="text-align:right"><span class="badge ${st}">${ST[st].e} ${ST[st].l}</span>${rc&&rcTxt[rc]?'<div class="row-sub muted" style="margin-top:3px">'+rcTxt[rc]+'</div>':''}</div>
+        <div class="row-sub">${o.orderDate?fmtDate(o.orderDate)+' · ':''}${o.department?esc(o.department)+' · ':''}შეკვ.: ${fmtN(num(o.qty))} ${esc(o.unit||'')}</div>
+        ${arr>0?'<div class="row-sub" style="color:var(--good);font-weight:700">მოვიდა: '+fmtN(arr)+' '+esc(o.unit||'')+(short>0?' · <span style="color:var(--bad)">აკლია '+fmtN(short)+'</span>':'')+'</div>':''}</div>
+        <div style="text-align:right"><span class="badge ${st}">${ST[st].e} ${ST[st].l}</span></div>
       </div>
     </div>`;
-  }).join(''):'<p class="muted">ყველა შეკვეთა ჩამოსულია ✓</p>';
+  }).join(''):'<p class="muted">ყველა შეკვეთა მიღებულია ✓</p>';
   $('dash-low').innerHTML=low.length?low.map(p=>{
     const stt=stockState(p);
     return `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--surface3)"><span style="font-weight:700">${esc(p.name)}</span><span class="badge ${stt}">${fmtN(num(p.stock))} ${esc(p.unit||'')}</span></div>`;
   }).join(''):'<p class="muted">ყველა მარაგი საკმარისია ✓</p>';
+  // audit — recent stock movements (who / when)
+  const acts=moves.slice(0,8);
+  $('dash-audit').innerHTML=acts.length?acts.map(m=>{
+    const inn=m.type==='in';
+    return `<div style="display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--surface3)">
+      <div><span style="font-weight:700;color:${inn?'var(--good)':'var(--bad)'}">${inn?'➕':'➖'} ${esc(m.productName||'')}</span> <span class="muted">${inn?'+':'−'}${fmtN(num(m.qty))} ${esc(m.unit||'')}</span>${m.note?'<div class="row-sub muted">'+esc(m.note)+'</div>':''}</div>
+      <div class="muted" style="text-align:right;white-space:nowrap">${esc(m.byName||'')}<br>${fmtDateTime(m.createdAt)}</div>
+    </div>`;
+  }).join(''):'<p class="muted">ჯერ აქტივობა არ არის</p>';
 }
 function dnum(ts){if(!ts)return 8e15;const d=ts.toDate?ts.toDate():new Date(ts);return isNaN(d)?8e15:d.getTime();}
 
@@ -858,6 +875,7 @@ function arrCard(o,extra){
     <div class="row-top">
       <div><div class="row-name">${esc(orderName(o))}</div>
       <div class="row-sub">შეკვეთილი: <b>${fmtN(num(o.qty))} ${esc(o.unit||'')}</b>${o.price!=null&&o.price!==''?' · 💰 '+fmtN(num(o.price))+' ₾':''}</div>
+      ${receiptOf(o)==='confirmed'?('<div class="row-sub" style="font-weight:700">მოვიდა: <span style="color:var(--good)">'+fmtN(arrivedTarget(o))+' '+esc(o.unit||'')+'</span>'+((num(o.qty)-arrivedTarget(o))>0?' · <span style="color:var(--bad)">აკლდა '+fmtN(num(o.qty)-arrivedTarget(o))+'</span>':' ✓')+'</div>'):''}
       ${o.purpose?'<div class="row-sub">🎯 '+esc(o.purpose)+'</div>':''}
       ${o.techComment?'<div class="row-sub" style="color:#b45309;font-weight:700">🔧 '+esc(o.techComment)+'</div>':''}
       <div class="row-sub">${o.department?'🏢 '+esc(o.department)+' · ':''}${o.supplier?'🏭 '+esc(o.supplier)+' · ':''}${o.statusBy?'მონიშნა: '+esc(o.statusBy):''}</div>
