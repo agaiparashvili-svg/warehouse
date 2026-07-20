@@ -264,7 +264,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
     <!-- arrived inventory -->
     <div class="section" id="sec-arrivals">
       <div class="section-header"><h2>📥 ჩამოსული ინვენტარი</h2></div>
-      <div class="hint">ნაკადი: შემკვეთი → „🟢 ჩამოვიდა" → <b>ტექნიკური მიმღები</b> ადასტურებს რა მოვიდა და რა არა — და მხოლოდ მაშინ ემატება „📦 მარაგს".</div>
+      <div class="hint"><b>ტექნიკური მიმღები</b> აქ ხედავს ყველა შეკვეთას → თითოზე წერს ჩამოსულ რაოდენობას და აჭერს „✅ მივიღე" (მარაგში ემატება) ან „❌ არ მივიღე". სრული კონტროლი — რა მოვიდა და რა არა.</div>
       <div class="toolbar">
         <button class="btn btn-good btn-sm" id="btn-sync" onclick="reconcileStock()">🔄 მარაგში სინქი</button>
         <input type="date" id="arr-from" onchange="renderArrivals()">
@@ -805,16 +805,24 @@ window.confirmReceipt=async function(id,accept){
   const o=orders.find(x=>x.id===id);if(!o)return;
   try{
     const tcEl=$('tcmt_'+id);const techComment=tcEl?tcEl.value.trim():undefined;
+    const rqEl=$('rq_'+id);
     let receipt,extra;
-    if(!accept){receipt='rejected';extra={rejectedBy:currentName,rejectedAt:serverTimestamp()};}
-    else{receipt='confirmed';extra={receivedBy:currentName,receivedAt:serverTimestamp()};}
+    if(!accept){
+      receipt='rejected';extra={rejectedBy:currentName,rejectedAt:serverTimestamp()};
+    }else{
+      const rq=(rqEl&&rqEl.value!=='')?num(rqEl.value):num(o.qty); // received quantity (default = ordered)
+      if(rq<=0){toast('ჩაწერე ჩამოსული რაოდენობა (> 0)','warn');return;}
+      receipt='confirmed';
+      extra={receivedBy:currentName,receivedAt:serverTimestamp(),arrivedQty:rq,arrivedAt:serverTimestamp(),
+        status:rq>=num(o.qty)?'arrived':'partial'};
+    }
     if(techComment!==undefined)extra.techComment=techComment;
-    const merged={...o,receipt};
+    const merged={...o,...extra,receipt};
     const r=await reconcileStockTo(merged,stockTarget(merged),'მიღება დადასტურდა','მიღება უარყოფილია');
     const data={receipt,appliedQty:r.appliedQty,...extra};
     if(r.productId)data.productId=r.productId;
     await updateDoc(doc(db,'wh_orders',id),data);
-    toast(accept?'✓ მიღება დადასტურდა · მარაგში დაემატა':'მიღება უარყოფილია',accept?'good':'warn');
+    toast(accept?'✓ მიღება დადასტურდა · მარაგში +'+fmtN(r.appliedQty):'მიღება უარყოფილია',accept?'good':'warn');
   }catch(e){toast('შეცდომა: '+e.message,'bad');}
 };
 // repair tool: reconcile CONFIRMED receipts into stock (idempotent via appliedQty)
@@ -865,17 +873,27 @@ window.renderArrivals=function(){
   const inRange=o=>{if(!from&&!to)return true;const d=adate(o);if(!d||isNaN(d))return false;
     if(from&&d<new Date(from+'T00:00:00'))return false;if(to&&d>new Date(to+'T23:59:59'))return false;return true;};
   const ag=o=>arrCard(o,'');
-  const arrived=orders.filter(o=>{const s=ostat(o);return s==='arrived'||s==='partial';}).filter(inRange);
-  const pending=arrived.filter(o=>{const r=receiptOf(o);return r==='pending'||r==='wh';}).sort((a,b)=>dnum(a.arrivedAt||a.orderDate)-dnum(b.arrivedAt||b.orderDate));
-  const confirmed=arrived.filter(o=>receiptOf(o)==='confirmed').sort((a,b)=>dnum(b.receivedAt||b.arrivedAt)-dnum(a.receivedAt||a.arrivedAt));
+  // technical receiver confirms directly on ALL open orders (what came / what didn't)
+  const open=orders.filter(o=>{const r=receiptOf(o);return r!=='confirmed'&&r!=='rejected';}).filter(inRange).sort((a,b)=>dnum(a.orderDate)-dnum(b.orderDate));
+  const confirmed=orders.filter(o=>receiptOf(o)==='confirmed').filter(inRange).sort((a,b)=>dnum(b.receivedAt||b.arrivedAt)-dnum(a.receivedAt||a.arrivedAt));
+  const rejected=orders.filter(o=>receiptOf(o)==='rejected').filter(inRange);
   const cft=canConfirmTech();
   let html='';
-  // pending — technical receiver confirms (adds to stock); can add a comment (e.g. "სხვა ჩამოვიდა")
-  html+=`<h3 style="font-size:14px;font-weight:800;color:#b45309;margin:4px 0 10px">🔧 დასადასტურებელი — ტექნიკური მიმღები (${pending.length})</h3>`;
-  html+=pending.length?pending.map(o=>arrCard(o,cft?`<div style="margin-top:8px"><input id="tcmt_${o.id}" type="text" placeholder="🎯 კომენტარი (მაგ. სხვა ჩამოვიდა)" value="${esc(o.techComment||'')}" style="width:100%;margin-bottom:8px"><div class="row-actions"><button class="btn btn-good btn-sm" onclick="confirmReceipt('${o.id}',true)">✅ მივიღე ტექნიკურ საწყობში</button><button class="btn btn-danger btn-sm" onclick="confirmReceipt('${o.id}',false)">❌ არ მივიღე</button></div></div>`:'<div class="row-sub muted">ელოდება ტექნიკური მიმღების დადასტურებას</div>')).join(''):'<p class="muted" style="margin-bottom:14px">დასადასტურებელი არაფერია ✓</p>';
+  // pending — technical receiver marks what arrived (qty) and confirms → adds to stock
+  html+=`<h3 style="font-size:14px;font-weight:800;color:#b45309;margin:4px 0 10px">🔧 დასადასტურებელი — ტექნიკური მიმღები (${open.length})</h3>`;
+  html+=open.length?open.map(o=>arrCard(o,cft?`<div style="margin-top:8px">
+      <div class="modal-row" style="gap:8px;margin-bottom:8px">
+        <div><label style="font-size:10px">ჩამოსული რაოდ.</label><input id="rq_${o.id}" type="number" min="0" step="0.01" value="${fmtN(num(o.qty))}" style="padding:8px"></div>
+        <div style="flex:2"><label style="font-size:10px">კომენტარი</label><input id="tcmt_${o.id}" type="text" placeholder="მაგ. სხვა ჩამოვიდა" value="${esc(o.techComment||'')}" style="padding:8px"></div>
+      </div>
+      <div class="row-actions"><button class="btn btn-good btn-sm" onclick="confirmReceipt('${o.id}',true)">✅ მივიღე</button><button class="btn btn-danger btn-sm" onclick="confirmReceipt('${o.id}',false)">❌ არ მივიღე</button></div></div>`:'<div class="row-sub muted">ელოდება ტექნიკური მიმღების დადასტურებას</div>')).join(''):'<p class="muted" style="margin-bottom:14px">დასადასტურებელი არაფერია ✓</p>';
   // confirmed (in stock)
   html+=`<h3 style="font-size:14px;font-weight:800;color:var(--good);margin:18px 0 10px">✅ მიღებული — მარაგში (${confirmed.length})</h3>`;
   html+=confirmed.length?confirmed.map(o=>ag(o)).join(''):'<p class="muted">ჯერ არაფერი მიღებულა</p>';
+  if(rejected.length){
+    html+=`<h3 style="font-size:14px;font-weight:800;color:var(--bad);margin:18px 0 10px">❌ არ მოვიდა (${rejected.length})</h3>`;
+    html+=rejected.map(o=>ag(o)).join('');
+  }
   $('arrivals-list').innerHTML=html;
 };
 
